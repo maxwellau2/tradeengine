@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 pub type Symbol = String;
 
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum Venue{
     Hyperliquid,
     Binance,

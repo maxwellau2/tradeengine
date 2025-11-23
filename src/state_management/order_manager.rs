@@ -1,13 +1,18 @@
+use crate::types::common::{Symbol, Venue};
+
+#[derive(Debug, Clone, Copy)]
 pub enum Side{
     LONG,
     SHORT,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum OrderType{
     LIMIT,
     MARKET,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum TimeInForce{
     GTC,
     PO,
@@ -15,36 +20,34 @@ pub enum TimeInForce{
     IOC,
 }
 
-type ClientOrderId = String;
-type Venue = String;
-type Symbol = u16;
+pub type ClientOrderId = String;
 
 // Outgoing messages to TradeServer
 pub struct PlaceOrder{
-    symbol: Symbol,
-    venue: Venue,
-    side: Side,
-    client_order_id: ClientOrderId,
-    qty: f64,
-    price: f64,
-    order_type: OrderType,
-    time_in_force: TimeInForce,
+    pub symbol: Symbol,
+    pub venue: Venue,
+    pub side: Side,
+    pub client_order_id: ClientOrderId,
+    pub qty: f64,
+    pub price: f64,
+    pub order_type: OrderType,
+    pub time_in_force: TimeInForce,
 }
 
 pub struct CancelOrder{
-    symbol: Symbol,
-    venue: Venue,
-    client_order_id: ClientOrderId,
+    pub symbol: Symbol,
+    pub venue: Venue,
+    pub client_order_id: ClientOrderId,
 }
 
 pub struct ReplaceOrder{
-    symbol: Symbol,
-    venue: Venue,
-    side: Side,
-    client_order_id: ClientOrderId,
-    qty: f64,
-    price: f64,
-    order_type: OrderType,
+    pub symbol: Symbol,
+    pub venue: Venue,
+    pub side: Side,
+    pub client_order_id: ClientOrderId,
+    pub qty: f64,
+    pub price: f64,
+    pub order_type: OrderType,
 }
 
 // incoming messages from TradeServer
@@ -100,6 +103,7 @@ pub struct OrderEvent{
 
 // Internal tracking
 
+#[derive(Debug, Clone)]
 pub enum OrderState{
     PENDING_NEW,
     NEW,
@@ -111,17 +115,18 @@ pub enum OrderState{
     UNKNOWN,
 }
 
+#[derive(Debug, Clone)]
 pub struct Order{
-    symbol: Symbol,
-    venue: Venue,
-    side: Side,
-    client_order_id: ClientOrderId,
-    qty: f64,
-    filled_qty: f64,
-    price: f64,
-    order_type: OrderType,
-    time_in_force: TimeInForce,
-    state: OrderState,
+    pub symbol: Symbol,
+    pub venue: Venue,
+    pub side: Side,
+    pub client_order_id: ClientOrderId,
+    pub qty: f64,
+    pub filled_qty: f64,
+    pub price: f64,
+    pub order_type: OrderType,
+    pub time_in_force: TimeInForce,
+    pub state: OrderState,
 }
 
 

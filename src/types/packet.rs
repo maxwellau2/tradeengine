@@ -1,4 +1,4 @@
-use crate::types::{clock::timestamp_nanos, orderbook::Orderbook};
+use crate::types::{clock::timestamp_nanos, kline::Kline, orderbook::Orderbook};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -19,6 +19,10 @@ impl<T> Packet<T> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum MessageBody {
+pub enum MDMessage {
     Orderbook(Orderbook),
+    Kline(Kline),
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum TSInternalMessage {}

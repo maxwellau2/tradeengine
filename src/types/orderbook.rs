@@ -1,10 +1,9 @@
+use crate::types::common::*;
 use fast_float;
 use lexical;
 use quanta::Clock;
 use quanta::Instant;
 use serde::{Deserialize, Serialize};
-use crate::types::common::*;
-
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Level {
@@ -44,7 +43,13 @@ impl Level {
 }
 
 impl Orderbook {
-    pub fn new(symbol: Symbol, venue: Venue, bids: Vec<Level>, asks: Vec<Level>, timestamp: u64) -> Orderbook {
+    pub fn new(
+        symbol: Symbol,
+        venue: Venue,
+        bids: Vec<Level>,
+        asks: Vec<Level>,
+        timestamp: u64,
+    ) -> Orderbook {
         return Self {
             symbol,
             venue,
@@ -58,7 +63,7 @@ impl Orderbook {
         let mut bids = Vec::new();
         let mut asks = Vec::new();
         let mut timestamp = 0u64;
-        let mut symbol: Symbol = "".into();
+        let mut symbol: Symbol = symbol_from_str("");
 
         // Try to extract levels and time
         if let Some(levels) = book.get("levels").and_then(|v| v.as_array()) {
@@ -81,13 +86,10 @@ impl Orderbook {
         if let Some(time) = book.get("time").and_then(|v| v.as_u64()) {
             timestamp = time;
         }
-        
-        
+
         if let Some(sym) = book.get("coin").and_then(|v| v.as_str()) {
-            symbol = sym.into();
+            symbol = symbol_from_str(sym);
         }
-
-
 
         Self {
             venue: Venue::Hyperliquid,
@@ -103,6 +105,7 @@ impl Orderbook {
         self.timestamp = 0;
         self.bids.clear();
         self.asks.clear();
+        self.symbol = symbol_from_str("");
 
         // Try to extract levels and time
         if let Some(levels) = book.get("levels").and_then(|v| v.as_array()) {
@@ -119,6 +122,10 @@ impl Orderbook {
                 for ask_level in ask_levels {
                     self.asks.push(Level::from_hyperliquid(ask_level));
                 }
+            }
+
+            if let Some(sym) = book.get("coin").and_then(|v| v.as_str()) {
+                self.symbol = symbol_from_str(sym);
             }
         }
 
@@ -171,15 +178,15 @@ mod tests {
         assert_eq!(level.price, 0.0); // Defaults to 0
     }
 
-    fn make_test_json(bids:usize, asks:usize)->serde_json::Value{
+    fn make_test_json(bids: usize, asks: usize) -> serde_json::Value {
         let mut bid = Vec::new();
         let mut ask = Vec::new();
-        for i in 0..bids{
-            bid.push((i,i));
-        } 
-        for i in 0..asks{
-            ask.push((i,i));
-        } 
+        for i in 0..bids {
+            bid.push((i, i));
+        }
+        for i in 0..asks {
+            ask.push((i, i));
+        }
         serde_json::json!({
             "coin": "ETH",
             "levels": [bid, ask],  // Empty levels
@@ -188,7 +195,13 @@ mod tests {
     }
     #[test]
     fn test_orderbook_buffer_reuse() {
-        let mut ob = Orderbook::new( "ETH".into(), Venue::Hyperliquid, vec![], vec![], 0);
+        let mut ob = Orderbook::new(
+            symbol_from_str("ethusdt"),
+            Venue::Hyperliquid,
+            vec![],
+            vec![],
+            0,
+        );
 
         // First update - allocates
         let json1 = make_test_json(20, 20); // 20 bids, 20 asks

@@ -1,8 +1,11 @@
 // this script is an example on connecting to an exchange (paradex) with the websocket wrapper
 
 use async_trait::async_trait;
-use md_feed::exchange_connectors::networking_base::websocket::{
-    message_handler, websocket, websocket_error,
+use md_feed::{
+    exchange_connectors::networking_base::websocket::{
+        message_handler, websocket, websocket_error,
+    },
+    types::packet::{MDMessage, Packet},
 };
 use serde_json::Value;
 
@@ -10,7 +13,7 @@ pub struct ParadexHandler {
     pub symbol: String, // e.g. "btcusdt"
     pub id: u64,
     // you can add references to your SPSC producer here
-    // e.g. producer: SpscProducer<Packet<MessageBody>>,
+    // e.g. producer: SpscProducer<Packet<MDMessage>>,
 }
 
 impl ParadexHandler {
@@ -21,6 +24,9 @@ impl ParadexHandler {
 
 #[async_trait]
 impl message_handler::MessageHandler for ParadexHandler {
+    fn publish(&mut self, packet: Packet<MDMessage>) {
+        //
+    }
     async fn on_message(&mut self, text: String) -> websocket_error::WsResult<()> {
         let msg: Value = serde_json::from_str(&text).map_err(websocket_error::WsError::Json)?;
 

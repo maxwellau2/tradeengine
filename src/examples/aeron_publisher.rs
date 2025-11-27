@@ -3,9 +3,9 @@
 // also need a listener
 
 use md_feed::channels::md_channel::{ChannelProtocol, MDChannel};
-use md_feed::types::common::Venue;
+use md_feed::types::common::{Venue, symbol_from_str};
 use md_feed::types::orderbook::{Level, Orderbook};
-use md_feed::types::packet::MessageBody;
+use md_feed::types::packet::MDMessage;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a channel
@@ -23,8 +23,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("MDChannel created successfully!");
 
     // Example: Publish a message
-    let body = MessageBody::Orderbook(Orderbook::new(
-        "ETHUSDT".into(),
+    let body = MDMessage::Orderbook(Orderbook::new(
+        symbol_from_str("ETHUSDT"),
         Venue::Binance,
         vec![Level::new(123.1, 12.0)],
         vec![Level::new(123.1, 12.0)],

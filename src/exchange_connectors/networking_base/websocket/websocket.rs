@@ -7,6 +7,7 @@ use tokio::net::TcpStream;
 use tokio::time::{Duration, sleep};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tracing::{error, info, trace, warn};
 
 pub struct WebSocketClient<H: MessageHandler> {
     base_url: String,
@@ -66,7 +67,7 @@ impl<H: MessageHandler> WebSocketClient<H> {
                 Ok(Message::Close(frame)) => {
                     // notify handler, then end this session
                     self.handler.on_disconnect().await?;
-                    eprintln!("[ws] remote close: {:?}", frame);
+                    warn!("[ws] remote close: {:?}", frame);
                     break;
                 }
                 Ok(_) => {
@@ -75,7 +76,7 @@ impl<H: MessageHandler> WebSocketClient<H> {
                 Err(e) => {
                     // Connection error, notify handler then return error
                     self.handler.on_disconnect().await.unwrap_or_else(|err| {
-                        eprintln!("[ws] on_disconnect error after conn error: {err}");
+                        error!("[ws] on_disconnect error after conn error: {err}");
                     });
                     return Err(WsError::Connect(e));
                 }
@@ -90,18 +91,20 @@ impl<H: MessageHandler> WebSocketClient<H> {
         loop {
             // 1) connect + subscribe
             if let Err(e) = self.connect_once().await {
-                eprintln!("[ws] connect error: {e}");
+                warn!("[ws] connect error: {e}");
                 sleep(Duration::from_secs(backoff_secs)).await;
                 continue;
             }
 
             // 2) run this session
             if let Err(e) = self.run_once().await {
-                eprintln!("[ws] session error: {e}");
+                warn!("[ws] session error: {e}");
+            } else {
+                println!("connected!");
             }
 
             // 3) wait & reconnect
-            eprintln!("[ws] session ended, reconnecting in {backoff_secs}s…");
+            warn!("[ws] session ended, reconnecting in {backoff_secs}s…");
             sleep(Duration::from_secs(backoff_secs)).await;
         }
     }

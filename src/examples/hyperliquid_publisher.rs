@@ -1,10 +1,10 @@
-// use md_feed::{exchange_connectors::{hyperliquid::feed::HyperliquidHandler, networking_base::websocket::{websocket, websocket_error}}, types::{clock::{timestamp_micros, timestamp_nanos}, orderbook::Orderbook, packet::{MessageBody, Packet}}};
+// use md_feed::{exchange_connectors::{hyperliquid::feed::HyperliquidHandler, networking_base::websocket::{websocket, websocket_error}}, types::{clock::{timestamp_micros, timestamp_nanos}, orderbook::Orderbook, packet::{MDMessage, Packet}}};
 // use ringbuf::{HeapRb, traits::{Consumer, Split}};
 
 // #[tokio::main]
 // async fn main() -> websocket_error::WsResult<()> {
 //     const RING_CAPACITY: usize = 1 << 15; // 1024
-//     let rb = HeapRb::<Packet<MessageBody>>::new(RING_CAPACITY);
+//     let rb = HeapRb::<Packet<MDMessage>>::new(RING_CAPACITY);
 //     let (prod, mut cons) = rb.split();
 
 //     // Define subscriptions
@@ -44,7 +44,7 @@
 
 //             now = timestamp_micros();
 //             match packet.body{
-//                 MessageBody::Orderbook(body) =>{
+//                 MDMessage::Orderbook(body) =>{
 //                     println!("Received in Consumer: {:?}", body);
 //                 }
 //             }
@@ -60,7 +60,7 @@ use md_feed::{
     },
     types::{
         clock::timestamp_nanos,
-        packet::{MessageBody, Packet},
+        packet::{MDMessage, Packet},
     },
 };
 use ringbuf::{
@@ -71,7 +71,7 @@ use ringbuf::{
 #[tokio::main]
 pub async fn main() -> WsResult<()> {
     const RING_CAPACITY: usize = 1 << 15; // 1024
-    let rb = HeapRb::<Packet<MessageBody>>::new(RING_CAPACITY);
+    let rb = HeapRb::<Packet<MDMessage>>::new(RING_CAPACITY);
     let (prod, mut cons) = rb.split();
     let subscriptions = vec![
         serde_json::json!({
@@ -102,8 +102,11 @@ pub async fn main() -> WsResult<()> {
 
             now = timestamp_nanos();
             match packet.body {
-                MessageBody::Orderbook(body) => {
-                    println!("Received in Consumer: {:?}", body);
+                MDMessage::Orderbook(obook) => {
+                    println!("Obook in Consumer: {:?}", obook);
+                }
+                MDMessage::Kline(kline) => {
+                    println!("Kline in Consumer: {:?}", kline);
                 }
             }
         }

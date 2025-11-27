@@ -1,4 +1,7 @@
-use crate::exchange_connectors::networking_base::websocket::websocket_error::*;
+use crate::{
+    exchange_connectors::networking_base::websocket::websocket_error::*,
+    types::packet::{MDMessage, Packet},
+};
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -9,6 +12,8 @@ pub trait MessageHandler: Send {
 
     /// Return subscription JSON payloads to send after each connect
     fn get_subscription_messages(&self) -> Vec<Value>;
+
+    fn publish(&mut self, packet: Packet<MDMessage>);
 
     /// Called after connect; default is to use get_subscription_messages()
     async fn on_connect(&mut self) -> WsResult<Vec<Value>> {

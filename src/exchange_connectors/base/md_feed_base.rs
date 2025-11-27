@@ -4,7 +4,10 @@ use crate::{
     exchange_connectors::networking_base::websocket::{
         message_handler, websocket::WebSocketClient, websocket_error,
     },
-    types::packet::{MessageBody, Packet},
+    types::{
+        common::KlineInterval,
+        packet::{MDMessage, Packet},
+    },
 };
 
 pub trait MDFeed: Sized + Send + 'static {
@@ -13,7 +16,7 @@ pub trait MDFeed: Sized + Send + 'static {
 
     /// Create a new feed with producer, testnet flag, and subscriptions
     fn new(
-        producer_rb: ringbuf::HeapProd<Packet<MessageBody>>,
+        producer_rb: ringbuf::HeapProd<Packet<MDMessage>>,
         is_testnet: bool,
         subscriptions: Vec<Value>,
     ) -> Self;
@@ -23,6 +26,10 @@ pub trait MDFeed: Sized + Send + 'static {
 
     /// Convert the feed into its underlying WebSocket client
     fn into_client(self) -> WebSocketClient<Self::Handler>;
+
+    fn kline_subscription(symbol: &str, interval: KlineInterval) -> serde_json::Value;
+
+    fn orderbook_subscription(symbol: &str) -> serde_json::Value;
 
     /// Run the feed forever with automatic reconnection (default implementation)
     fn run_forever(

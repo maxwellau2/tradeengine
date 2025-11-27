@@ -1,34 +1,42 @@
-use crate::state_management::order_manager::{Order, PlaceOrder, CancelOrder, ReplaceOrder};
-use crate::types::common::Venue;
-use async_trait::async_trait;
+use crate::types::common::{ClientOrderId, Order, Symbol, Venue};
+use crate::types::trade_server::{
+    CancelOrder, EngineTSMessage, PlaceOrder, ReplaceOrder, TSEngineMessage,
+};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::rc::Rc;
 
 /// Result type for order operations
-pub type OrderResult<T> = Result<T, OrderGatewayError>;
+pub type TradeServerResult<T> = Result<T, TradeServerError>;
 
 #[derive(Debug)]
-pub enum OrderGatewayError {
+pub enum TradeServerError {
     AeronPublishError(String),
+    Iceoryx2PublishError(String),
     InvalidOrder(String),
     Timeout,
 }
 
-/// Order gateway trait - abstracts order placement to trade server
-#[async_trait]
-pub trait OrderGateway: Send + Sync {
-    async fn place_order(&mut self, order: PlaceOrder) -> OrderResult<String>;
-    async fn cancel_order(&mut self, cancel: CancelOrder) -> OrderResult<()>;
-    async fn replace_order(&mut self, replace: ReplaceOrder) -> OrderResult<()>;
+pub trait OrderGatewaySend {
+    fn send(&mut self, message: EngineTSMessage) -> Result<(), String>;
+}
+
+pub trait OrderGatewayRecv {
+    fn recv(&mut self) -> Option<TSEngineMessage>;
+}
+
+pub trait OrderGateway {
+    fn place_order(&mut self, order: PlaceOrder) -> TradeServerResult<String>;
+    fn cancel_order(&mut self, cancel: CancelOrder) -> TradeServerResult<()>;
+    fn replace_order(&mut self, replace: ReplaceOrder) -> TradeServerResult<()>;
 }
 
 /// Position information
 #[derive(Debug, Clone)]
 pub struct Position {
-    pub symbol: String,
+    pub symbol: Symbol,
     pub venue: Venue,
-    pub quantity: f64,        // Positive = long, negative = short
+    pub quantity: f64, // Positive = long, negative = short
     pub avg_entry_price: f64,
     pub unrealized_pnl: f64,
     pub realized_pnl: f64,
@@ -37,9 +45,9 @@ pub struct Position {
 /// Engine state - single source of truth
 #[derive(Debug)]
 pub struct EngineState {
-    pub open_orders: HashMap<String, Order>,           // client_order_id -> Order
-    pub positions: HashMap<(Venue, String), Position>, // (venue, symbol) -> Position
-    pub balances: HashMap<(Venue, String), f64>,       // (venue, asset) -> balance
+    pub open_orders: HashMap<ClientOrderId, Order>, // client_order_id -> Order
+    pub positions: HashMap<(Venue, Symbol), Position>, // (venue, symbol) -> Position
+    pub balances: HashMap<(Venue, String), f64>,    // (venue, asset) -> balance
 }
 
 impl EngineState {
@@ -60,8 +68,8 @@ impl EngineState {
     }
 
     /// Get position for a specific venue and symbol
-    pub fn get_position(&self, venue: &Venue, symbol: &str) -> Option<&Position> {
-        self.positions.get(&(venue.clone(), symbol.to_string()))
+    pub fn get_position(&self, venue: &Venue, symbol: &Symbol) -> Option<&Position> {
+        self.positions.get(&(venue.clone(), *symbol))
     }
 
     /// Get all positions for a venue
@@ -75,25 +83,26 @@ impl EngineState {
 
     /// Get balance for a specific asset on a venue
     pub fn get_balance(&self, venue: &Venue, asset: &str) -> f64 {
-        *self.balances
+        *self
+            .balances
             .get(&(venue.clone(), asset.to_string()))
             .unwrap_or(&0.0)
     }
 }
 
-/// Context passed to strategy handlers - provides read access to state and order placement
+// / Context passed to strategy handlers - provides read access to state and order placement
 pub struct StrategyContext {
     /// Order gateway for placing/canceling/replacing orders
-    pub order_gateway: Arc<tokio::sync::Mutex<dyn OrderGateway>>,
+    pub order_gateway: Rc<RefCell<dyn OrderGateway>>,
 
-    /// Read-only access to engine state (RwLock allows many readers, one writer)
-    pub state: Arc<RwLock<EngineState>>,
+    /// Shared access to engine state
+    pub state: Rc<RefCell<EngineState>>,
 }
 
 impl StrategyContext {
     pub fn new(
-        order_gateway: Arc<tokio::sync::Mutex<dyn OrderGateway>>,
-        state: Arc<RwLock<EngineState>>,
+        order_gateway: Rc<RefCell<dyn OrderGateway>>,
+        state: Rc<RefCell<EngineState>>,
     ) -> Self {
         Self {
             order_gateway,
@@ -101,21 +110,17 @@ impl StrategyContext {
         }
     }
 
-    /// Helper: Get current position for a symbol
-    pub async fn get_position(&self, venue: &Venue, symbol: &str) -> Option<Position> {
-        let state = self.state.read().await;
+    pub fn get_position(&self, venue: &Venue, symbol: &Symbol) -> Option<Position> {
+        let state = self.state.borrow();
         state.get_position(venue, symbol).cloned()
     }
 
-    /// Helper: Get all open orders
-    pub async fn get_open_orders(&self) -> Vec<Order> {
-        let state = self.state.read().await;
+    pub fn get_open_orders(&self) -> Vec<Order> {
+        let state = self.state.borrow();
         state.open_orders.values().cloned().collect()
     }
-
-    /// Helper: Get balance
-    pub async fn get_balance(&self, venue: &Venue, asset: &str) -> f64 {
-        let state = self.state.read().await;
+    pub fn get_balance(&self, venue: &Venue, asset: &str) -> f64 {
+        let state = self.state.borrow();
         state.get_balance(venue, asset)
     }
 }

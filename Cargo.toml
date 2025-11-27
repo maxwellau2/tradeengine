@@ -26,6 +26,8 @@ thiserror = "2.0.17"
 serde_json = "1.0"
 futures-util = "0.3"
 async-trait = "0.1.89"
+tracing-subscriber = "0.3.20"
+iceoryx2 = "0.7.0"
 
 [lib]
 name = "md_feed"
@@ -46,3 +48,7 @@ path = "src/examples/paradex_ws_example.rs"
 [[bin]]
 name = "hyperliquid_publisher"
 path = "src/examples/hyperliquid_publisher.rs"
+
+[[bin]]
+name = "engine_demo"
+path = "src/examples/engine_demo.rs"

@@ -1,5 +1,5 @@
 use crate::channels::utils;
-use crate::types::packet::{MessageBody, Packet};
+use crate::types::packet::{MDMessage, Packet};
 use bincode::serialize;
 use quanta::Clock;
 use rusteron_client::*;
@@ -50,7 +50,7 @@ impl MDChannel {
         })
     }
 
-    pub fn publish(&mut self, body: MessageBody) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn publish(&mut self, body: MDMessage) -> Result<(), Box<dyn std::error::Error>> {
         let packet = Packet::new(body, self.sequence_num);
         let bytes = serialize(&packet)?;
         let res = self

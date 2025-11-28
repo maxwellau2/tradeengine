@@ -1,4 +1,4 @@
-use crate::types::{clock::timestamp_nanos, kline::Kline, orderbook::Orderbook};
+use crate::types::{clock::timestamp_nanos, kline::Kline, orderbook::Orderbook, trade_server::{CancelOrder, PlaceOrder, ReplaceOrder}};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -24,5 +24,9 @@ pub enum MDMessage {
     Kline(Kline),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum TSInternalMessage {}
+#[derive(Debug, Clone)]
+pub enum TSInternalMessage {
+    PlaceOrder(PlaceOrder),
+    CancelOrder(CancelOrder),
+    ReplaceOrder(ReplaceOrder),
+}

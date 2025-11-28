@@ -17,8 +17,15 @@ TODO
 
 Ideally, each thread would get it's own core, but in the event we only have 2 cores to work with:
 
-- Core 1: MDEngine, Strategy, TS Central
+- Core 1: MDEngine, Strategy, TS Central + OS
 - Core 2: TS Execution
+
+If we have 4 cores:
+
+- Core 1: MDEngine, Strategy, TS Central
+- Core 2: TS Central
+- Core 3: TS Execution
+- Core 4: Monitoring Services + OS
 
 ## Core Architecture
 

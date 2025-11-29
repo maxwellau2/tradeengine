@@ -52,3 +52,7 @@ path = "src/examples/hyperliquid_publisher.rs"
 [[bin]]
 name = "engine_demo"
 path = "src/examples/engine_demo.rs"
+
+[[bin]]
+name = "ts_demo"
+path = "src/examples/ts_demo.rs"

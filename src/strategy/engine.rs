@@ -3,10 +3,13 @@ use crate::strategy::context::{
     TradeServerError, TradeServerResult,
 };
 use crate::strategy::strategy::Strategy;
-use crate::types::common::{Order, OrderState, Venue, client_order_id_to_str, symbol_to_str};
+use crate::types::clock::timestamp_micros;
+use crate::types::common::{
+    Order, OrderState, PassportId, Venue, client_order_id_to_str, symbol_to_str,
+};
 use crate::types::trade_server::{
-    CancelOrder, EngineTSMessage, EngineTSMessageType, PlaceOrder, ReplaceOrder, TSEngineMessage,
-    TSEngineMessageType,
+    CancelOrder, EngineTSMessage, EngineTSMessageType, Heartbeat, PlaceOrder, ReplaceOrder,
+    TSEngineMessage, TSEngineMessageType,
 };
 use crate::types::{
     kline::Kline,
@@ -109,6 +112,21 @@ impl<S: OrderGatewaySend> OrderGateway for TradeServerGateway<S> {
         );
         Ok(())
     }
+
+    fn send_heartbeat(&mut self, hb: Heartbeat) -> TradeServerResult<()> {
+        let message = EngineTSMessage {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64,
+            message: EngineTSMessageType::Heartbeat(hb),
+        };
+
+        self.sender
+            .send(message)
+            .map_err(TradeServerError::Iceoryx2PublishError)?;
+        Ok(())
+    }
 }
 
 /// Reconciliation state
@@ -134,6 +152,11 @@ pub struct MarketDataEngine {
     recon_state: ReconState,
     /// Running flag
     running: bool,
+
+    last_heartbeat_sent: u64,
+    last_heartbeat_recv: u64,
+    heartbeat_cycle: u64,
+    passport_id: PassportId,
 }
 
 impl MarketDataEngine {
@@ -141,6 +164,7 @@ impl MarketDataEngine {
         strategy: Box<dyn Strategy>,
         ts_sender: impl OrderGatewaySend + 'static,
         ts_receiver: impl OrderGatewayRecv + 'static,
+        passport_id: PassportId,
     ) -> Self {
         // Create shared state
         let state = Rc::new(RefCell::new(EngineState::new()));
@@ -159,6 +183,10 @@ impl MarketDataEngine {
             md_consumers: HashMap::new(),
             recon_state: ReconState::NotStarted,
             running: false,
+            last_heartbeat_sent: 0,
+            last_heartbeat_recv: 0,
+            heartbeat_cycle: Duration::from_secs(5).as_micros() as u64,
+            passport_id,
         }
     }
 
@@ -168,8 +196,26 @@ impl MarketDataEngine {
         self.md_consumers.insert(venue, consumer);
     }
 
+    pub fn send_heartbeat(&mut self) {
+        self.context.order_gateway.borrow_mut().send_heartbeat(Heartbeat { passport_id: self.passport_id.clone() });
+        self.last_heartbeat_sent = timestamp_micros();
+    }
+
     /// Run one iteration of the event loop
     pub fn run_once(&mut self) {
+        // Poll trade server for incoming messages (order updates, fills, position updates)
+        while let Some(ts_message) = self.ts_receiver.recv() {
+            self.handle_ts_message(ts_message);
+        }
+        // we need to check if the TS is even alive to send the orders, this is a safety mechanism!
+        let timenow = timestamp_micros();
+        if timenow - self.last_heartbeat_sent > self.heartbeat_cycle{
+            self.send_heartbeat();
+        }
+        if timenow - self.last_heartbeat_recv > self.heartbeat_cycle{
+            warn!("No response from TS in the last {} microseconds. Is the TS alive?", self.heartbeat_cycle);
+            return;
+        }
         // Poll all market data consumers in round-robin fashion
         // Collect packets first to avoid borrow checker issues
         // Venue is Copy (1-2 bytes), so clone is free
@@ -184,26 +230,22 @@ impl MarketDataEngine {
         for (venue, packet) in packets {
             self.handle_md_packet(&venue, packet);
         }
-
-        // Poll trade server for incoming messages (order updates, fills, position updates)
-        while let Some(ts_message) = self.ts_receiver.recv() {
-            self.handle_ts_message(ts_message);
-        }
-
         // Yield to allow other tasks to run
         // thread::sleep(Duration::from_micros(1));
         // or we can hint to core we are busy waiting
         core::hint::spin_loop();
     }
 
+    pub fn on_start_protocol(&mut self){
+        // then we call the strategy's on start hook
+        self.strategy.on_start(&self.context);
+    }
+
     /// Start the engine - main event loop
     pub fn start(&mut self) {
         info!("Starting MarketDataEngine");
         self.running = true;
-
-        // Call strategy on_start
-        self.strategy.on_start(&self.context);
-
+        self.on_start_protocol();
         // Start reconciliation
         self.start_recon();
 
@@ -219,10 +261,7 @@ impl MarketDataEngine {
     pub fn start_for_duration(&mut self, duration: Duration) {
         info!("Starting MarketDataEngine for {:?}", duration);
         self.running = true;
-
-        // Call strategy on_start
-        self.strategy.on_start(&self.context);
-
+        self.on_start_protocol();
         // Start reconciliation
         self.start_recon();
 
@@ -268,6 +307,10 @@ impl MarketDataEngine {
             TSEngineMessageType::PositionUpdate => {
                 // TODO: Implement position update handling
                 debug!("Position update received");
+            }
+            TSEngineMessageType::HeartbeatResponse => {
+                debug!("Heartbeat received");
+                self.last_heartbeat_recv = timestamp_micros();
             }
         }
     }
@@ -465,7 +508,7 @@ mod tests {
         let sender = DummySender;
         let receiver = DummyReceiver;
 
-        let engine = MarketDataEngine::new(strategy, sender, receiver);
+        let engine = MarketDataEngine::new(strategy, sender, receiver, PassportId::new("123"));
 
         let state = engine.get_state();
         assert_eq!(state.open_orders.len(), 0);

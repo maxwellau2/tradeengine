@@ -60,6 +60,7 @@ impl<'de, const N: usize> Deserialize<'de> for FixedString<N> {
 // Type aliases for specific use cases
 pub type Symbol = FixedString<32>;
 pub type ClientOrderId = FixedString<64>;
+pub type PassportId = FixedString<16>;
 
 // Helper functions for backward compatibility
 pub fn symbol_from_str(s: &str) -> Symbol {
@@ -178,4 +179,8 @@ pub struct Order {
     pub order_type: OrderType,
     pub time_in_force: TimeInForce,
     pub state: OrderState,
+}
+
+impl Order{
+    
 }

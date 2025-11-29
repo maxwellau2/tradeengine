@@ -1,6 +1,6 @@
 use crate::types::common::{ClientOrderId, Order, Symbol, Venue};
 use crate::types::trade_server::{
-    CancelOrder, EngineTSMessage, PlaceOrder, ReplaceOrder, TSEngineMessage,
+    CancelOrder, EngineTSMessage, Heartbeat, PlaceOrder, ReplaceOrder, TSEngineMessage
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -29,6 +29,7 @@ pub trait OrderGateway {
     fn place_order(&mut self, order: PlaceOrder) -> TradeServerResult<String>;
     fn cancel_order(&mut self, cancel: CancelOrder) -> TradeServerResult<()>;
     fn replace_order(&mut self, replace: ReplaceOrder) -> TradeServerResult<()>;
+    fn send_heartbeat(&mut self, hb: Heartbeat) -> TradeServerResult<()>;
 }
 
 /// Position information

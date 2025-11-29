@@ -6,7 +6,7 @@ use md_feed::{
         strategy::Strategy,
     },
     types::{
-        common::{Order, Venue},
+        common::{Order, PassportId, Venue},
         kline::Kline,
         orderbook::Orderbook,
         packet::{MDMessage, Packet},
@@ -94,7 +94,7 @@ async fn test_engine_receives_orderbook_data() {
 
     // Run engine in blocking task (doesn't block tokio runtime)
     let engine_handle = tokio::task::spawn_blocking(move || {
-        let mut engine = MarketDataEngine::new(strategy, sender, receiver);
+        let mut engine = MarketDataEngine::new(strategy, sender, receiver, PassportId::new("1234"));
         engine.add_md_consumer(Venue::Hyperliquid, cons);
         engine.start_for_duration(Duration::from_secs(10));
     });

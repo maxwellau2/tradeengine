@@ -1,15 +1,5 @@
 # Trade Engine + Trade Server (Rust)
 
-TODO
-1. Formalise the packets coming in from Hyperliquid (OrderUpdates, PositionUpdates, BalanceUpdate)
-2. Test Hyperliquid
-3. Test IPC from Engine to TS
-4. Decide on architecure of Execution Node of TS
-5. Write the methods to post by ws using Tokio Tungstenite (currently for hyperliquid and binance)
-6. Can try to figure out how to create a Stream Based HTTP Client? Is it even possible?
-7. Core Pinning
-
-
 ## Outline
 - This repo is a rust-based Market Data Ingestion Engine + Trade Server. It is designed with thread-per-core in mind.
 - *Intra*-Process communication is done using lock-free ring buffers (ringbuf crate)
@@ -22,7 +12,7 @@ Ideally, each thread would get it's own core, but in the event we only have 2 co
 
 If we have 4 cores:
 
-- Core 1: MDEngine, Strategy, TS Central
+- Core 1: MDEngine, Strategy
 - Core 2: TS Central
 - Core 3: TS Execution
 - Core 4: Monitoring Services + OS

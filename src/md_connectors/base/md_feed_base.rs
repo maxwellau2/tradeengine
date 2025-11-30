@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::{
-    exchange_connectors::networking_base::websocket::{
+    md_connectors::networking_base::websocket::{
         message_handler, websocket::WebSocketClient, websocket_error,
     },
     types::{

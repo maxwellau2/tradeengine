@@ -1,5 +1,5 @@
 use md_feed::{
-    exchange_connectors::{base::md_feed_base::MDFeed, hyperliquid::feed::HyperliquidMDFeed},
+    md_connectors::{base::md_feed_base::MDFeed, hyperliquid::feed::HyperliquidMDFeed},
     strategy::{
         context::{OrderGatewayRecv, OrderGatewaySend, StrategyContext},
         engine::MarketDataEngine,
@@ -94,7 +94,8 @@ async fn test_engine_receives_orderbook_data() {
 
     // Run engine in blocking task (doesn't block tokio runtime)
     let engine_handle = tokio::task::spawn_blocking(move || {
-        let mut engine = MarketDataEngine::new(strategy, sender, receiver, PassportId::new("1234"));
+        let mut engine =
+            MarketDataEngine::new(strategy, PassportId::new("1234"), "channel1".into());
         engine.add_md_consumer(Venue::Hyperliquid, cons);
         engine.start_for_duration(Duration::from_secs(10));
     });
@@ -111,7 +112,7 @@ async fn test_engine_receives_orderbook_data() {
     );
 
     println!(
-        " Test passed! Received {} orderbook updates in 10 seconds",
+        "Test passed! Received {} orderbook updates in 10 seconds",
         count
     );
 }

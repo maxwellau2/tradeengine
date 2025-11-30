@@ -1,15 +1,17 @@
 use std::collections::HashMap;
 
+use crate::types::trade_server::EngineTSMessageType::*;
+use crate::types::trade_server::TSEngineMessageType::*;
 use crate::{
     ts_protocol::iceoryx2_wrapper::TSIceoryx2Wrapper,
     types::{
-        clock::timestamp_nanos, common::{PassportId, Venue}, packet::{Packet, TSInternalMessage}, trade_server::{EngineTSMessage, Heartbeat, TSEngineMessage}
+        clock::timestamp_nanos,
+        common::{PassportId, Venue},
+        packet::{Packet, TSInternalMessage},
+        trade_server::{EngineTSMessage, Heartbeat, TSEngineMessage},
     },
 };
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::Consumer};
-use crate::types::trade_server::EngineTSMessageType::*;
-use crate::types::trade_server::TSEngineMessageType::*;
-
 
 pub struct Central {
     execution_senders: HashMap<Venue, HeapProd<Packet<TSInternalMessage>>>,
@@ -30,11 +32,11 @@ impl Central {
         })
     }
 
-    pub fn poll_outer_protocol(&mut self){
+    pub fn poll_outer_protocol(&mut self) {
         match self.outer_protocol.recv() {
             Some(value) => {
                 println!("Received {:?}", value);
-                match value.message{
+                match value.message {
                     // PlaceOrder(place_order) => todo!(),
                     // CancelOrder(cancel_order) => todo!(),
                     // ReplaceOrder(replace_order) => todo!(),
@@ -42,17 +44,15 @@ impl Central {
                     // QryPositions(qry_positions) => todo!(),
                     // QryBalance(qry_balance) => todo!(),
                     Heartbeat(heartbeat) => {
-                        let res = self.outer_protocol.send(
-                            TSEngineMessage{
-                                timestamp: timestamp_nanos(),
-                                message: HeartbeatResponse{}
-                            }
-                        );
+                        let res = self.outer_protocol.send(TSEngineMessage {
+                            timestamp: timestamp_nanos(),
+                            message: HeartbeatResponse {},
+                        });
                         match res {
                             Ok(_) => println!("SENT!"),
                             Err(_) => println!("wwtf"),
                         }
-                    },
+                    }
                     others => {
                         println!("Received {:?}", others);
                     }
@@ -64,7 +64,7 @@ impl Central {
         }
     }
 
-    pub fn poll_execution_receivers(&mut self){
+    pub fn poll_execution_receivers(&mut self) {
         for (_, v) in self.execution_receivers.iter_mut() {
             match v.try_pop() {
                 Some(value) => {

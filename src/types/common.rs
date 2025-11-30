@@ -181,6 +181,4 @@ pub struct Order {
     pub state: OrderState,
 }
 
-impl Order{
-    
-}
+impl Order {}

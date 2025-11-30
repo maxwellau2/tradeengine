@@ -1,8 +1,8 @@
-use crate::exchange_connectors::base::md_feed_base::MDFeed;
+use crate::md_connectors::base::md_feed_base::MDFeed;
 // Hyperliquid WebSocket feed handler with buffer reuse and proper error handling
-use crate::exchange_connectors::hyperliquid::constants;
-use crate::exchange_connectors::networking_base::websocket::websocket::WebSocketClient;
-use crate::exchange_connectors::networking_base::websocket::{message_handler, websocket_error};
+use crate::md_connectors::hyperliquid::constants;
+use crate::md_connectors::networking_base::websocket::websocket::WebSocketClient;
+use crate::md_connectors::networking_base::websocket::{message_handler, websocket_error};
 use crate::types::common::{KlineInterval, Venue, symbol_from_str};
 use crate::types::kline::Kline;
 use crate::types::{

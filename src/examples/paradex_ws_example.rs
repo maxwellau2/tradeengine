@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use md_feed::{
-    exchange_connectors::networking_base::websocket::{
+    md_connectors::networking_base::websocket::{
         message_handler, websocket, websocket_error,
     },
     types::packet::{MDMessage, Packet},

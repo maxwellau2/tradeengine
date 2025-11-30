@@ -1,4 +1,9 @@
-use crate::types::{clock::timestamp_nanos, kline::Kline, orderbook::Orderbook, trade_server::{CancelOrder, PlaceOrder, ReplaceOrder}};
+use crate::types::{
+    clock::timestamp_nanos,
+    kline::Kline,
+    orderbook::Orderbook,
+    trade_server::{CancelOrder, PlaceOrder, ReplaceOrder},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

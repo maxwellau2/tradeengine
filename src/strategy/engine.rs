@@ -3,6 +3,7 @@ use crate::strategy::context::{
     TradeServerError, TradeServerResult,
 };
 use crate::strategy::strategy::Strategy;
+use crate::ts_protocol::iceoryx2_wrapper::EngineIceoryx2Wrapper;
 use crate::types::clock::timestamp_micros;
 use crate::types::common::{
     Order, OrderState, PassportId, Venue, client_order_id_to_str, symbol_to_str,
@@ -162,15 +163,19 @@ pub struct MarketDataEngine {
 impl MarketDataEngine {
     pub fn new(
         strategy: Box<dyn Strategy>,
-        ts_sender: impl OrderGatewaySend + 'static,
-        ts_receiver: impl OrderGatewayRecv + 'static,
+        // ts_sender: impl OrderGatewaySend + 'static,
+        // ts_receiver: impl OrderGatewayRecv + 'static,
         passport_id: PassportId,
+        channel_name: String,
     ) -> Self {
+        let io: EngineIceoryx2Wrapper = EngineIceoryx2Wrapper::new(channel_name).expect("wtf");
+        let (sender, receiver) = io.split();
+
         // Create shared state
         let state = Rc::new(RefCell::new(EngineState::new()));
 
         // Wrap the low-level sender in a high-level gateway
-        let order_gateway = Rc::new(RefCell::new(TradeServerGateway::new(ts_sender)));
+        let order_gateway = Rc::new(RefCell::new(TradeServerGateway::new(sender)));
 
         // Create context
         let context = StrategyContext::new(order_gateway, Rc::clone(&state));
@@ -179,7 +184,7 @@ impl MarketDataEngine {
             strategy,
             context,
             state,
-            ts_receiver: Box::new(ts_receiver),
+            ts_receiver: Box::new(receiver),
             md_consumers: HashMap::new(),
             recon_state: ReconState::NotStarted,
             running: false,
@@ -197,7 +202,12 @@ impl MarketDataEngine {
     }
 
     pub fn send_heartbeat(&mut self) {
-        self.context.order_gateway.borrow_mut().send_heartbeat(Heartbeat { passport_id: self.passport_id.clone() });
+        self.context
+            .order_gateway
+            .borrow_mut()
+            .send_heartbeat(Heartbeat {
+                passport_id: self.passport_id.clone(),
+            });
         self.last_heartbeat_sent = timestamp_micros();
     }
 
@@ -209,11 +219,14 @@ impl MarketDataEngine {
         }
         // we need to check if the TS is even alive to send the orders, this is a safety mechanism!
         let timenow = timestamp_micros();
-        if timenow - self.last_heartbeat_sent > self.heartbeat_cycle{
+        if timenow - self.last_heartbeat_sent > self.heartbeat_cycle {
             self.send_heartbeat();
         }
-        if timenow - self.last_heartbeat_recv > self.heartbeat_cycle{
-            warn!("No response from TS in the last {} microseconds. Is the TS alive?", self.heartbeat_cycle);
+        if timenow - self.last_heartbeat_recv > self.heartbeat_cycle {
+            warn!(
+                "No response from TS in the last {} microseconds. Is the TS alive?",
+                self.heartbeat_cycle
+            );
             return;
         }
         // Poll all market data consumers in round-robin fashion
@@ -236,7 +249,7 @@ impl MarketDataEngine {
         core::hint::spin_loop();
     }
 
-    pub fn on_start_protocol(&mut self){
+    pub fn on_start_protocol(&mut self) {
         // then we call the strategy's on start hook
         self.strategy.on_start(&self.context);
     }
@@ -508,7 +521,7 @@ mod tests {
         let sender = DummySender;
         let receiver = DummyReceiver;
 
-        let engine = MarketDataEngine::new(strategy, sender, receiver, PassportId::new("123"));
+        let engine = MarketDataEngine::new(strategy, PassportId::new("123"), "channel1".into());
 
         let state = engine.get_state();
         assert_eq!(state.open_orders.len(), 0);

@@ -41,3 +41,8 @@ If we have 4 cores:
 - Learn rust lol
 - Learn performance tuning methods
 - Better software design patterns
+
+
+## Caveats
+- You might see in our gitignore, we have a DO_NOT_COMMIT folder ignored
+- Here, you have all of your config files loaded, all of your custom strategies, etc. This is YOUR playground!

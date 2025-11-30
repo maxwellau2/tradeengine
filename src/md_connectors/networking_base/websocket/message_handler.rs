@@ -1,5 +1,5 @@
 use crate::{
-    exchange_connectors::networking_base::websocket::websocket_error::*,
+    md_connectors::networking_base::websocket::websocket_error::*,
     types::packet::{MDMessage, Packet},
 };
 use async_trait::async_trait;

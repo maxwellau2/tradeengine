@@ -54,7 +54,7 @@
 // }
 
 use md_feed::{
-    exchange_connectors::{
+    md_connectors::{
         base::md_feed_base::MDFeed, hyperliquid::feed::HyperliquidMDFeed,
         networking_base::websocket::websocket_error::WsResult,
     },

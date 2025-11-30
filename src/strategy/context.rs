@@ -1,6 +1,6 @@
 use crate::types::common::{ClientOrderId, Order, Symbol, Venue};
 use crate::types::trade_server::{
-    CancelOrder, EngineTSMessage, Heartbeat, PlaceOrder, ReplaceOrder, TSEngineMessage
+    CancelOrder, EngineTSMessage, Heartbeat, PlaceOrder, ReplaceOrder, TSEngineMessage,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;

@@ -1,6 +1,8 @@
 use iceoryx2::prelude::*;
 
-use crate::types::common::{ClientOrderId, OrderType, PassportId, Side, Symbol, TimeInForce, Venue};
+use crate::types::common::{
+    ClientOrderId, OrderType, PassportId, Side, Symbol, TimeInForce, Venue,
+};
 
 // Outgoing messages (Engine -> TS)
 
@@ -18,7 +20,7 @@ pub struct PlaceOrder {
     pub order_type: OrderType,
     pub passport_id: PassportId,
 }
-impl PlaceOrder{
+impl PlaceOrder {
     pub fn new(
         symbol: Symbol,
         venue: Venue,
@@ -29,8 +31,18 @@ impl PlaceOrder{
         time_in_force: TimeInForce,
         order_type: OrderType,
         passport_id: PassportId,
-    ) -> Self{
-        Self { symbol, venue, client_order_id, price, qty, side, time_in_force, order_type, passport_id }
+    ) -> Self {
+        Self {
+            symbol,
+            venue,
+            client_order_id,
+            price,
+            qty,
+            side,
+            time_in_force,
+            order_type,
+            passport_id,
+        }
     }
 }
 

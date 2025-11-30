@@ -257,7 +257,7 @@ mod test {
             side: Side::SHORT,
             time_in_force: TimeInForce::IOC,
             order_type: OrderType::LIMIT,
-            passport_id: PassportId::new("testeroni")
+            passport_id: PassportId::new("testeroni"),
         };
 
         let engine_msg = EngineTSMessage {
@@ -393,7 +393,7 @@ mod test {
             side: Side::LONG,
             time_in_force: TimeInForce::GTC,
             order_type: OrderType::LIMIT,
-            passport_id: PassportId::new("testeroni")
+            passport_id: PassportId::new("testeroni"),
         };
 
         let engine_msg1 = EngineTSMessage {
@@ -411,7 +411,7 @@ mod test {
             side: Side::SHORT,
             time_in_force: TimeInForce::IOC,
             order_type: OrderType::MARKET,
-            passport_id: PassportId::new("testeroni")
+            passport_id: PassportId::new("testeroni"),
         };
 
         let engine_msg2 = EngineTSMessage {

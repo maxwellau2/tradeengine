@@ -1,0 +1,56 @@
+{
+    "passport_configs": [
+        {
+            "id": 1234,
+            "details": {
+                "hyperliquid": {
+                    "user_address": "0x1234",
+                    "private_key": "0x12345"
+                },
+                "binance": {
+                    "api_key": "123x",
+                    "secret_key": "1235x"
+                },
+                "paradex": {
+                    "user_address": "0x1234",
+                    "private_key": "0x12345"
+                }
+            }
+        },
+        {
+            "id": 2234,
+            "details": {
+                "hyperliquid": {
+                    "user_address": "0x12234",
+                    "private_key": "0x123245"
+                },
+                "binance": {
+                    "api_key": "1223x",
+                    "secret_key": "12325x"
+                }
+            }
+        },
+        {
+            "id": 3234,
+            "details": {
+                "paradex": {
+                    "user_address": "0x1234",
+                    "private_key": "0x12345"
+                },
+                "hyperliquid": {
+                    "user_address": "0x12234",
+                    "private_key": "0x123245"
+                }
+            }
+        },
+        {
+            "id": 4234,
+            "details": {
+                "hyperliquid": {
+                    "user_address": "0x12234",
+                    "private_key": "0x123245"
+                }
+            }
+        }
+    ]
+}

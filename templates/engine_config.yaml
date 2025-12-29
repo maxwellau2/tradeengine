@@ -1,0 +1,5 @@
+channel_name: channel1
+passport_id: 1234
+symbols:
+    - hyperliquid: [BTC, ETH, LINK]
+    - binance: [BTCUSDT, ETHUSDT, LINKUSDT]

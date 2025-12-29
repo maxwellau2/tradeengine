@@ -1,4 +1,12 @@
 format:
 	cargo fmt
-check-lint:
+check_lint:
 	cargo clippy
+engine_demo:
+	cargo run --bin engine_demo
+ts_demo:
+	cargo run --bin ts_demo
+ts_tui:
+	RUST_LOG=info cargo run --release --bin ts_runner_demo /home/maxwell/dev/personal/mdfeed/md_feed/DO_NOT_COMMIT/ts_config.yaml --tui
+ts_cli_client:
+	cargo run --bin ts_cli -- --channel channel1 --venue hyperliquid --passport 1234

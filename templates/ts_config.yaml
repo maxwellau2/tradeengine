@@ -1,0 +1,4 @@
+passport_path: templates/passport_template.json
+passport_id: 1234
+exchanges: [Hyperliquid]
+channel_name: channel1

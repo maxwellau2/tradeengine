@@ -5,7 +5,9 @@
             "details": {
                 "hyperliquid": {
                     "user_address": "0x1234",
-                    "private_key": "0x12345"
+                    "private_key": "0x12345",
+                    "is_mainnet": true,
+                    "vault_address": "asdadssa"
                 },
                 "binance": {
                     "api_key": "123x",

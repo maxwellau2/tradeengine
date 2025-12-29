@@ -1,4 +1,3 @@
-use md_feed::channels;
 use md_feed::types;
 
 fn main() {

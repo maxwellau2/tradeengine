@@ -210,7 +210,7 @@ impl TSIceoryx2Wrapper {
 
 #[cfg(test)]
 mod test {
-    use crate::types::common::PassportId;
+    use crate::types::common::{Order, OrderState, PassportId};
 
     use super::*;
 
@@ -257,7 +257,7 @@ mod test {
             side: Side::SHORT,
             time_in_force: TimeInForce::IOC,
             order_type: OrderType::LIMIT,
-            passport_id: PassportId::new("testeroni"),
+            passport_id: 123,
         };
 
         let engine_msg = EngineTSMessage {
@@ -328,7 +328,18 @@ mod test {
 
         let ts_response = TSEngineMessage {
             timestamp: 9876543210,
-            message: TSEngineMessageType::OrderUpdate,
+            message: TSEngineMessageType::OrderUpdate(Order {
+                symbol: Symbol::new("test"),
+                venue: Venue::Hyperliquid,
+                side: Side::LONG,
+                client_order_id: ClientOrderId::new("12345"),
+                qty: 123.4,
+                filled_qty: 0.0,
+                price: 123.3,
+                order_type: OrderType::LIMIT,
+                time_in_force: TimeInForce::GTC,
+                state: OrderState::NEW,
+            }),
         };
 
         // Send from TradeServer
@@ -393,7 +404,7 @@ mod test {
             side: Side::LONG,
             time_in_force: TimeInForce::GTC,
             order_type: OrderType::LIMIT,
-            passport_id: PassportId::new("testeroni"),
+            passport_id: 123,
         };
 
         let engine_msg1 = EngineTSMessage {
@@ -411,7 +422,7 @@ mod test {
             side: Side::SHORT,
             time_in_force: TimeInForce::IOC,
             order_type: OrderType::MARKET,
-            passport_id: PassportId::new("testeroni"),
+            passport_id: 123,
         };
 
         let engine_msg2 = EngineTSMessage {

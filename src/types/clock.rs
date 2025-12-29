@@ -3,21 +3,29 @@ use std::sync::OnceLock;
 
 static GLOBAL_CLOCK: OnceLock<Clock> = OnceLock::new();
 
-/// Get a reference to the global Quanta clock (monotonic, for latency measurements)
 pub fn global_clock() -> &'static Clock {
     GLOBAL_CLOCK.get_or_init(|| Clock::new())
 }
 
-/// Get current Unix timestamp in nanoseconds (low overhead)
 #[inline]
 pub fn timestamp_nanos() -> u64 {
     coarsetime::Clock::now_since_epoch().as_nanos() as u64
 }
 
-/// Get current Unix timestamp in microseconds (low overhead, fits in u64 safely)
+/// high precision timestamp using quanta (rdtsc on x86)
+#[inline]
+pub fn timestamp_nanos_precise() -> u64 {
+    global_clock().raw()
+}
+
 #[inline]
 pub fn timestamp_micros() -> u64 {
     coarsetime::Clock::now_since_epoch().as_micros()
+}
+
+#[inline]
+pub fn timestamp_millis() -> u64 {
+    coarsetime::Clock::now_since_epoch().as_millis()
 }
 
 mod tests {

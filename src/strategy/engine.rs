@@ -4,7 +4,7 @@ use crate::strategy::context::{
 };
 use crate::strategy::strategy::Strategy;
 use crate::ts_protocol::iceoryx2_wrapper::EngineIceoryx2Wrapper;
-use crate::types::clock::timestamp_micros;
+use crate::types::clock::{timestamp_micros, timestamp_nanos};
 use crate::types::common::{
     Order, OrderState, PassportId, Venue, client_order_id_to_str, symbol_to_str,
 };
@@ -31,7 +31,6 @@ use tracing::{debug, info, warn};
 /// This struct implements the high-level `OrderGateway` trait (async, user-friendly API)
 /// by wrapping any type that implements `OrderGatewaySend` (sync, low-level send).
 ///
-/// This allows us to swap out the underlying transport (iceoryx2, Aeron, etc.)
 /// without changing the engine or strategy code.
 pub struct TradeServerGateway<S: OrderGatewaySend> {
     sender: S,
@@ -53,10 +52,7 @@ impl<S: OrderGatewaySend> OrderGateway for TradeServerGateway<S> {
 
         // Create the low-level message with timestamp
         let message = EngineTSMessage {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64,
+            timestamp: timestamp_nanos(),
             message: EngineTSMessageType::PlaceOrder(order),
         };
 
@@ -76,10 +72,7 @@ impl<S: OrderGatewaySend> OrderGateway for TradeServerGateway<S> {
 
     fn cancel_order(&mut self, cancel: CancelOrder) -> TradeServerResult<()> {
         let message = EngineTSMessage {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64,
+            timestamp: timestamp_nanos(),
             message: EngineTSMessageType::CancelOrder(cancel),
         };
 
@@ -96,10 +89,7 @@ impl<S: OrderGatewaySend> OrderGateway for TradeServerGateway<S> {
 
     fn replace_order(&mut self, replace: ReplaceOrder) -> TradeServerResult<()> {
         let message = EngineTSMessage {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64,
+            timestamp: timestamp_nanos(),
             message: EngineTSMessageType::ReplaceOrder(replace),
         };
 
@@ -116,10 +106,7 @@ impl<S: OrderGatewaySend> OrderGateway for TradeServerGateway<S> {
 
     fn send_heartbeat(&mut self, hb: Heartbeat) -> TradeServerResult<()> {
         let message = EngineTSMessage {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64,
+            timestamp: timestamp_nanos(),
             message: EngineTSMessageType::Heartbeat(hb),
         };
 
@@ -168,7 +155,8 @@ impl MarketDataEngine {
         passport_id: PassportId,
         channel_name: String,
     ) -> Self {
-        let io: EngineIceoryx2Wrapper = EngineIceoryx2Wrapper::new(channel_name).expect("wtf");
+        let io: EngineIceoryx2Wrapper = EngineIceoryx2Wrapper::new(channel_name)
+            .expect("failed to create iceoryx2 channel - is the trade server running?");
         let (sender, receiver) = io.split();
 
         // Create shared state
@@ -308,12 +296,12 @@ impl MarketDataEngine {
         );
 
         match ts_message.message {
-            TSEngineMessageType::OrderUpdate => {
+            TSEngineMessageType::OrderUpdate(order_update) => {
                 // TODO: Implement order update handling
                 // This would extract the order data and call self.on_order_update()
                 warn!("OrderUpdate not yet implemented");
             }
-            TSEngineMessageType::BalanceUpdate => {
+            TSEngineMessageType::BalanceUpdate(balance_update) => {
                 // TODO: Implement balance update handling
                 debug!("Balance update received");
             }
@@ -521,7 +509,7 @@ mod tests {
         let sender = DummySender;
         let receiver = DummyReceiver;
 
-        let engine = MarketDataEngine::new(strategy, PassportId::new("123"), "channel1".into());
+        let engine = MarketDataEngine::new(strategy, 123, "channel1".into());
 
         let state = engine.get_state();
         assert_eq!(state.open_orders.len(), 0);

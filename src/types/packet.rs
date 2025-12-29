@@ -1,8 +1,11 @@
 use crate::types::{
-    clock::timestamp_nanos,
+    clock::timestamp_nanos_precise,
     kline::Kline,
     orderbook::Orderbook,
-    trade_server::{CancelOrder, PlaceOrder, ReplaceOrder},
+    trade_server::{
+        CancelOrder, CancelOrderResp, PlaceOrder, PlaceOrderResp, ReplaceOrder, ReplaceOrderResp,
+        StateUpdate,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +19,7 @@ pub struct Packet<T> {
 impl<T> Packet<T> {
     pub fn new(body: T, seq_num: u64) -> Packet<T> {
         Self {
-            timestamp: timestamp_nanos(),
+            timestamp: timestamp_nanos_precise(),
             seq_num,
             body,
         }
@@ -34,4 +37,10 @@ pub enum TSInternalMessage {
     PlaceOrder(PlaceOrder),
     CancelOrder(CancelOrder),
     ReplaceOrder(ReplaceOrder),
+    // from execution
+    CancelOrderResp(CancelOrderResp),
+    PlaceOrderResp(PlaceOrderResp),
+    ReplaceOrderResp(ReplaceOrderResp),
+    // from state subscriber
+    StateUpdate(StateUpdate),
 }

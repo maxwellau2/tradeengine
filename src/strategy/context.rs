@@ -5,15 +5,20 @@ use crate::types::trade_server::{
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use thiserror::Error;
 
 /// Result type for order operations
 pub type TradeServerResult<T> = Result<T, TradeServerError>;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum TradeServerError {
-    AeronPublishError(String),
+    #[error("iceoryx2 publish error: {0}")]
     Iceoryx2PublishError(String),
+
+    #[error("invalid order: {0}")]
     InvalidOrder(String),
+
+    #[error("timeout")]
     Timeout,
 }
 

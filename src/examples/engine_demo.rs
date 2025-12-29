@@ -64,9 +64,7 @@ impl Strategy for DummyStrategy {
 }
 
 async fn test_engine_creation() {
-    let strategy = Box::new(DummyStrategy {
-        passport_id: PassportId::new("12345"),
-    });
+    let strategy = Box::new(DummyStrategy { passport_id: 123 });
     // Dummy sender/receiver for testing (no real trade server)
     // struct DummySender;
     // impl OrderGatewaySend for DummySender {
@@ -88,7 +86,7 @@ async fn test_engine_creation() {
     // let receiver = DummyReceiver;
     const RING_CAPACITY: usize = 1 << 10;
     let channel_name = "channel1";
-    let mut engine = MarketDataEngine::new(strategy, PassportId::new("1234"), channel_name.into());
+    let mut engine = MarketDataEngine::new(strategy, 123, channel_name.into());
     let rb = HeapRb::<Packet<MDMessage>>::new(RING_CAPACITY);
     let (prod, cons) = rb.split();
     let subscriptions = vec![

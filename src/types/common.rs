@@ -60,7 +60,7 @@ impl<'de, const N: usize> Deserialize<'de> for FixedString<N> {
 // Type aliases for specific use cases
 pub type Symbol = FixedString<32>;
 pub type ClientOrderId = FixedString<64>;
-pub type PassportId = FixedString<16>;
+pub type PassportId = u16;
 
 // Helper functions for backward compatibility
 pub fn symbol_from_str(s: &str) -> Symbol {
@@ -86,6 +86,18 @@ pub enum Venue {
     Binance,
     Paradex,
     Okx,
+}
+
+impl Venue {
+    pub fn from_string(s: &String) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "hyperliquid" => Some(Venue::Hyperliquid),
+            "binance" => Some(Venue::Binance),
+            "paradex" => Some(Venue::Paradex),
+            "okx" => Some(Venue::Okx),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -135,6 +147,7 @@ impl KlineInterval {
 pub enum Side {
     LONG,
     SHORT,
+    UNKNOWN,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ZeroCopySend)]
@@ -142,6 +155,7 @@ pub enum Side {
 pub enum OrderType {
     LIMIT,
     MARKET,
+    UNKNOWN,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ZeroCopySend)]
@@ -151,6 +165,7 @@ pub enum TimeInForce {
     PO,
     FOK,
     IOC,
+    UNKNOWN,
 }
 
 #[derive(Debug, Clone, Copy, ZeroCopySend)]
@@ -182,3 +197,23 @@ pub struct Order {
 }
 
 impl Order {}
+
+#[derive(Debug, Clone, Copy, ZeroCopySend)]
+#[repr(C)]
+pub struct Balance {
+    pub coin: Symbol,
+    pub venue: Venue,
+    pub qty: f64,
+}
+
+#[derive(Debug, Clone, Copy, ZeroCopySend)]
+#[repr(C)]
+pub struct Position {
+    pub symbol: Symbol,
+    pub venue: Venue,
+    pub side: Side,
+    pub qty: f64,
+    pub position_value: f64,
+    pub unrealised_pnl: f64,
+    pub margin: f64,
+}

@@ -24,18 +24,28 @@ type Term = Terminal<CrosstermBackend<Stdout>>;
 pub struct TUI {
     terminal: Term,
     state: SharedTUIState,
+    title: String,
 }
 
 impl TUI {
     pub fn new(state: SharedTUIState) -> io::Result<Self> {
+        Self::with_title(state, "TUI".to_string())
+    }
+
+    pub fn with_title(state: SharedTUIState, title: String) -> io::Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-        Ok(Self { terminal, state })
+        Ok(Self {
+            terminal,
+            state,
+            title,
+        })
     }
 
+    /// blocking run loop - use for standalone TUI thread
     pub fn run(&mut self) -> io::Result<()> {
         loop {
             self.draw()?;
@@ -44,7 +54,6 @@ impl TUI {
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
                     if key.code == KeyCode::Char('q') {
-                        // signal all threads to shutdown
                         request_shutdown();
                         break;
                     }
@@ -54,21 +63,65 @@ impl TUI {
         Ok(())
     }
 
+    /// non-blocking single frame render
+    pub fn draw_once(&mut self) -> io::Result<()> {
+        self.draw()
+    }
+
+    /// non-blocking quit check - returns true if 'q' pressed
+    pub fn check_quit(&self) -> bool {
+        // Duration::ZERO = don't block, just check if key already in buffer
+        if event::poll(Duration::ZERO).unwrap_or(false) {
+            if let Ok(Event::Key(key)) = event::read() {
+                if key.code == KeyCode::Char('q') {
+                    request_shutdown();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn draw(&mut self) -> io::Result<()> {
         // load() is lock-free - never blocks, always returns latest state
         let state = self.state.load();
         let state = (*state).clone();
+        let title = self.title.clone();
 
         self.terminal.draw(|f| {
+            // split into header and content
+            let outer_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3), // header
+                    Constraint::Min(0),    // content
+                ])
+                .split(f.area());
+
+            // render header
+            let header = Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!(" {} ", title),
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  Press 'q' to quit"),
+            ]))
+            .block(Block::default().borders(Borders::BOTTOM));
+
+            f.render_widget(header, outer_chunks[0]);
+
             // split into left (data) and right (logs)
             let main_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .margin(1)
                 .constraints([
                     Constraint::Percentage(50), // data panels
                     Constraint::Percentage(50), // logs
                 ])
-                .split(f.area());
+                .split(outer_chunks[1]);
 
             // left side: orders, positions, balances
             let left_chunks = Layout::default()

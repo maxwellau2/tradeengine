@@ -3,7 +3,7 @@ use crate::md_connectors::base::md_feed_base::MDFeed;
 use crate::md_connectors::hyperliquid::constants;
 use crate::md_connectors::networking_base::websocket::websocket::WebSocketClient;
 use crate::md_connectors::networking_base::websocket::{message_handler, websocket_error};
-use crate::types::common::{KlineInterval, Venue, symbol_from_str};
+use crate::types::common::{KlineInterval, Symbol, Venue, symbol_from_str};
 use crate::types::kline::Kline;
 use crate::types::{
     orderbook::Orderbook,
@@ -12,11 +12,18 @@ use crate::types::{
 use async_trait::async_trait;
 use ringbuf::{self, traits::Producer};
 use serde_json::Value;
+use std::collections::HashMap;
 use tracing::{debug, warn};
+
+/// key for tracking klines: (symbol, interval)
+type KlineKey = (Symbol, KlineInterval);
 
 pub struct HyperliquidHandler {
     pub ringbuf_producer: ringbuf::HeapProd<Packet<MDMessage>>,
     orderbook_buffer: Orderbook,
+    /// tracks last kline per symbol+interval to detect candle close
+    kline_tracker: HashMap<KlineKey, Kline>,
+    /// temp buffer for parsing incoming kline data
     kline_buffer: Kline,
     seq_num: u64,
     dropped_packets: u64,
@@ -37,18 +44,8 @@ impl HyperliquidHandler {
                 Vec::new(),
                 0,
             ),
-            kline_buffer: Kline::new(
-                0,
-                symbol_from_str(""),
-                Venue::Hyperliquid,
-                KlineInterval::M1,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                false,
-            ),
+            kline_tracker: HashMap::new(),
+            kline_buffer: Kline::default_with_venue(Venue::Hyperliquid),
             seq_num: 0,
             dropped_packets: 0,
             subscriptions,
@@ -115,13 +112,31 @@ impl message_handler::MessageHandler for HyperliquidHandler {
             Some("candle") => {
                 match data {
                     Some(value) => {
+                        // parse into temp buffer
                         self.kline_buffer.update_from_hyperliquid(value);
+                        let key = (self.kline_buffer.symbol, self.kline_buffer.interval);
+
+                        // check tracker and emit closed kline if new candle started
+                        if let Some(mut prev_kline) = self.kline_tracker.remove(&key) {
+                            if prev_kline.open_time != self.kline_buffer.open_time {
+                                // new candle - emit previous as closed
+                                prev_kline.is_closed = true;
+                                self.seq_num = self.seq_num.wrapping_add(1);
+                                self.publish(Packet::new(
+                                    MDMessage::Kline(prev_kline),
+                                    self.seq_num,
+                                ));
+                            }
+                            // else same candle, prev_kline is dropped
+                        }
+
+                        // store in tracker and emit current kline (open)
                         self.seq_num = self.seq_num.wrapping_add(1);
-                        // Clone the buffer (data is copied, but source keeps capacity)
-                        let packet =
-                            Packet::new(MDMessage::Kline(self.kline_buffer.clone()), self.seq_num);
-                        // Try to push to ringbuffer with back pressure handling
-                        self.publish(packet);
+                        self.kline_tracker.insert(key, self.kline_buffer.clone());
+                        self.publish(Packet::new(
+                            MDMessage::Kline(self.kline_buffer.clone()),
+                            self.seq_num,
+                        ));
                     }
                     None => {
                         warn!("Received candle message with no data field");
@@ -183,7 +198,7 @@ impl MDFeed for HyperliquidMDFeed {
     fn kline_subscription(symbol: &str, interval: KlineInterval) -> serde_json::Value {
         return serde_json::json!({
            "method": "subscribe",
-            "subscription": { "type": symbol, "coin": "XLM", "interval": interval.to_string() }
+            "subscription": { "type": "candle", "coin": symbol, "interval": interval.to_string() }
         });
     }
 

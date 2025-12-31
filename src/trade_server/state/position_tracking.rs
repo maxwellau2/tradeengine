@@ -4,6 +4,7 @@ use crate::types::common::{Position, Side, Symbol, Venue};
 
 /// tracks position state per symbol
 /// positions with qty=0 are considered closed and removed
+#[derive(Debug)]
 pub struct PositionTrackingUnit {
     positions: HashMap<Symbol, Position>,
 }

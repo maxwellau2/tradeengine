@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Level {
-    price: f64,
-    size: f64,
+    pub price: f64,
+    pub size: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

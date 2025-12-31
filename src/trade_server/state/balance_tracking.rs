@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::types::common::{Balance, Symbol};
 
 /// tracks balance state per coin
+#[derive(Debug)]
 pub struct BalanceTrackingUnit {
     balances: HashMap<Symbol, Balance>,
 }

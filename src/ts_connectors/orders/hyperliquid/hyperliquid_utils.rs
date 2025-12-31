@@ -334,9 +334,11 @@ pub struct MetaResponse {
     pub universe: Vec<AssetInfo>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AssetInfo {
     pub name: String,
+    pub sz_decimals: u8,
 }
 
 // hyperliquid time-in-force mapping
@@ -356,6 +358,16 @@ pub fn format_float(val: f64) -> String {
     let s = s.trim_end_matches('0');
     let s = s.trim_end_matches('.');
     s.to_string()
+}
+
+// format size with specific decimal precision (for sz_decimals)
+pub fn format_size(val: f64, decimals: u8) -> String {
+    let multiplier = 10_f64.powi(decimals as i32);
+    let rounded = (val * multiplier).floor() / multiplier;
+    format!("{:.prec$}", rounded, prec = decimals as usize)
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
 }
 
 // parse formatted cloid back to simple form

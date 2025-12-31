@@ -188,12 +188,16 @@ pub enum StateUpdate {
 pub enum TSEngineMessageType {
     OrderUpdate(Order),
     BalanceUpdate(Balance),
-    PositionUpdate,
+    PositionUpdate(Position),
     HeartbeatResponse,
+    // query responses (streamed one at a time)
+    QryOrdersResp(QryOrderResp),
+    QryPositionsResp(QryPositionResp),
+    QryBalancesResp(QryBalanceResp),
 }
 
 #[derive(Debug, Clone, Copy, ZeroCopySend)]
-#[type_name("EngineTSMessage")]
+#[type_name("TSEngineMessage")]
 #[repr(C)]
 pub struct TSEngineMessage {
     pub timestamp: u64,
@@ -317,4 +321,116 @@ pub enum OrderResponse {
     Place(PlaceOrderResp),
     Cancel(CancelOrderResp),
     Replace(ReplaceOrderResp),
+}
+
+// =============================================================================
+// query response types (IPC compatible - streaming one item at a time)
+// =============================================================================
+
+/// balance query response - streamed one at a time
+#[derive(Debug, Clone, Copy, ZeroCopySend)]
+#[type_name("QryBalanceResp")]
+#[repr(C)]
+pub struct QryBalanceResp {
+    pub balance: Balance,
+    pub is_last: bool,
+    pub success: bool,
+}
+
+impl QryBalanceResp {
+    pub fn item(balance: Balance, is_last: bool) -> Self {
+        Self {
+            balance,
+            is_last,
+            success: true,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            balance: Balance::default(),
+            is_last: true,
+            success: true,
+        }
+    }
+
+    pub fn failed() -> Self {
+        Self {
+            balance: Balance::default(),
+            is_last: true,
+            success: false,
+        }
+    }
+}
+
+/// order query response - streamed one at a time
+#[derive(Debug, Clone, Copy, ZeroCopySend)]
+#[type_name("QryOrderResp")]
+#[repr(C)]
+pub struct QryOrderResp {
+    pub order: Order,
+    pub is_last: bool,
+    pub success: bool,
+}
+
+impl QryOrderResp {
+    pub fn item(order: Order, is_last: bool) -> Self {
+        Self {
+            order,
+            is_last,
+            success: true,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            order: Order::default(),
+            is_last: true,
+            success: true,
+        }
+    }
+
+    pub fn failed() -> Self {
+        Self {
+            order: Order::default(),
+            is_last: true,
+            success: false,
+        }
+    }
+}
+
+/// position query response - streamed one at a time
+#[derive(Debug, Clone, Copy, ZeroCopySend)]
+#[type_name("QryPositionResp")]
+#[repr(C)]
+pub struct QryPositionResp {
+    pub position: Position,
+    pub is_last: bool,
+    pub success: bool,
+}
+
+impl QryPositionResp {
+    pub fn item(position: Position, is_last: bool) -> Self {
+        Self {
+            position,
+            is_last,
+            success: true,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            position: Position::default(),
+            is_last: true,
+            success: true,
+        }
+    }
+
+    pub fn failed() -> Self {
+        Self {
+            position: Position::default(),
+            is_last: true,
+            success: false,
+        }
+    }
 }

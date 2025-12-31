@@ -17,7 +17,6 @@ pub trait MessageHandler: Send {
 
     /// Called after connect; default is to use get_subscription_messages()
     async fn on_connect(&mut self) -> WsResult<Vec<Value>> {
-        println!("connected!");
         Ok(self.get_subscription_messages())
     }
 

@@ -5,6 +5,7 @@ pub mod signature_utls;
 use std::error::Error;
 
 use anyhow::Result;
+use async_trait::async_trait;
 
 use crate::types::{
     common::PassportId,
@@ -13,7 +14,8 @@ use crate::types::{
 
 pub use hyperliquid::HyperliquidExecutor;
 
-pub trait Executor {
+#[async_trait]
+pub trait Executor: Send {
     type Error: Error + Send + Sync + 'static;
 
     async fn new(passport_id: PassportId, cfg_path: &str) -> Result<Self, Self::Error>

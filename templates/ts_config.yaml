@@ -1,3 +1,5 @@
+main_core: 1
+io_core: 3
 passport_path: templates/passport_template.json
 passport_id: 1234
 exchanges: [Hyperliquid]

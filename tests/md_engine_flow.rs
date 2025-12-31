@@ -94,7 +94,8 @@ async fn test_engine_receives_orderbook_data() {
 
     // Run engine in blocking task (doesn't block tokio runtime)
     let engine_handle = tokio::task::spawn_blocking(move || {
-        let mut engine = MarketDataEngine::new(strategy, 123, "channel1".into());
+        let mut engine =
+            MarketDataEngine::new(strategy, 123, Venue::Hyperliquid, "channel1".into());
         engine.add_md_consumer(Venue::Hyperliquid, cons);
         engine.start_for_duration(Duration::from_secs(10));
     });

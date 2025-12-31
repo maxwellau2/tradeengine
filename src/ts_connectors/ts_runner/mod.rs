@@ -1,24 +1,25 @@
-// idea here is to use hashmap to add key value pairs,
-// so essentially, we .add_executor(Executor), many times and call a .build() function
-// this .build function will lookup hashmaps and shit for us and do the linking
-// then the .run() method will spawn the threads and pin them appropriately
+// ts runner - orchestrates trade server components with core pinning
+//
+// architecture:
+// - main_core: central sync loop (hot path)
+// - io_core: single tokio runtime for all executors + state subscribers
 
 use std::error::Error;
 use std::thread::{self, JoinHandle};
 
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::Split};
 use tokio::runtime::Builder;
-use tracing::{error, info};
+use tracing::info;
 
 use crate::{
-    config_parser::passport::PassportConfig,
+    core_utils::{pin_to_core, validate_cores},
     trade_server::{central::Central, execution::ExecutorRunner, state::runner::StateRunner},
     ts_connectors::{
         config::TSConfig,
         orders::{AnyExecutor, Executor, HyperliquidExecutor},
         state::{AnyStateSubscriber, StateSubscriber, hyperliquid::HyperliquidStateSubscriber},
     },
-    tui::{SharedTUIState, TUI, new_shared_state},
+    tui::{SharedTUIState, new_shared_state},
     types::{
         common::Venue,
         packet::{Packet, TSInternalMessage},
@@ -172,153 +173,137 @@ impl TSRunner {
         }
     }
 
-    /// consumes self and spawns threads for executors and central
-    /// returns join handles so caller can wait for completion
+    /// consumes self and spawns threads for central and io runtime
+    ///
+    /// thread layout:
+    /// - main_core: central sync loop (hot path)
+    /// - io_core: tokio runtime for all executors + state subscribers
     pub fn run(self) -> Vec<JoinHandle<()>> {
-        let core_ids = core_affinity::get_core_ids().unwrap_or_default();
-        if core_ids.len() < 2 {
-            error!("need at least 2 cores for pinning");
-        }
+        let main_core = self.ts_config.main_core;
+        let io_core = self.ts_config.io_core;
+        let channel_name = self.ts_config.channel_name;
+
+        // validate cores before starting
+        validate_cores(main_core, io_core).expect("invalid core configuration");
 
         let mut handles = Vec::new();
-        let num_executors = self.executor_configs.len();
 
-        // thread A: executor runners (starting from core 0)
-        // each executor gets its own thread for isolation
-        for (i, cfg) in self.executor_configs.into_iter().enumerate() {
-            let core_id = core_ids.get(i).copied();
-            let handle = thread::spawn(move || {
-                // pin to core if available
-                if let Some(id) = core_id {
-                    if core_affinity::set_for_current(id) {
-                        info!("executor runner pinned to core {:?}", id);
-                    }
-                }
+        // spawn io runtime on io_core - handles all async i/o
+        let io_handle = Self::spawn_io_runtime(io_core, self.executor_configs, self.state_configs);
+        handles.push(io_handle);
 
-                // create single-threaded tokio runtime for this executor
-                // single-threaded avoids work-stealing overhead
-                let rt = Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to create tokio runtime");
-
-                rt.block_on(async {
-                    // create executor inside runtime to avoid Send issues
-                    // async resources (websocket, timers) bound to this runtime
-                    let executor: AnyExecutor = match cfg.venue {
-                        Venue::Hyperliquid => AnyExecutor::Hyperliquid(
-                            HyperliquidExecutor::new(cfg.passport_id, &cfg.passport_path)
-                                .await
-                                .expect("failed to create hyperliquid executor"),
-                        ),
-                        Venue::Binance => todo!(),
-                        Venue::Paradex => todo!(),
-                        Venue::Okx => todo!(),
-                    };
-
-                    let mut runner =
-                        ExecutorRunner::new(cfg.venue, cfg.inbound, cfg.outbound, executor);
-                    info!("executor for {:?} has started", cfg.venue);
-                    runner.start().await;
-                });
-            });
-            handles.push(handle);
-        }
-
-        let num_state_runners = self.state_configs.len();
-
-        // thread B: state runners (after executor cores)
-        for (i, cfg) in self.state_configs.into_iter().enumerate() {
-            let core_id = core_ids.get(num_executors + i).copied();
-            let handle = thread::spawn(move || {
-                if let Some(id) = core_id {
-                    if core_affinity::set_for_current(id) {
-                        info!("state runner pinned to core {:?}", id);
-                    }
-                }
-
-                let rt = Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to create tokio runtime");
-
-                rt.block_on(async {
-                    let subscriber: AnyStateSubscriber = match cfg.venue {
-                        Venue::Hyperliquid => AnyStateSubscriber::Hyperliquid(
-                            HyperliquidStateSubscriber::new(cfg.passport_id, &cfg.passport_path)
-                                .await
-                                .expect("failed to create hyperliquid state subscriber"),
-                        ),
-                        Venue::Binance => todo!(),
-                        Venue::Paradex => todo!(),
-                        Venue::Okx => todo!(),
-                    };
-
-                    let mut runner = StateRunner::new(cfg.venue, cfg.outbound, subscriber);
-                    info!("state runner for {:?} has started", cfg.venue);
-                    runner.start().await;
-                });
-            });
-            handles.push(handle);
-        }
-
-        // thread C: central on a dedicated core after executors and state runners
-        let central_core = core_ids.get(num_executors + num_state_runners).copied();
-        let central_execution_channels = self.central_execution_channels;
-        let central_state_channels = self.central_state_channels;
-        let tui_state_for_central = self.tui_state.clone();
-        let central_handle = thread::spawn(move || {
-            if let Some(id) = central_core {
-                if core_affinity::set_for_current(id) {
-                    info!("central pinned to core {:?}", id);
-                }
-            }
-
-            // create central inside the thread to avoid Send issues with iceoryx2
-            let mut central =
-                Central::new(self.ts_config.channel_name).expect("failed to create central");
-
-            // set tui state for central to update (if tui enabled)
-            if let Some(tui_state) = tui_state_for_central {
-                central.set_tui_state(tui_state);
-            }
-
-            // register execution channel halves
-            for ch in central_execution_channels {
-                central.add_execution_channel(ch.venue, ch.sender, ch.receiver);
-            }
-
-            // register state channel halves (only receiver used)
-            for ch in central_state_channels {
-                central.add_state_channel(ch.venue, ch.sender, ch.receiver);
-            }
-
-            info!("central has started");
-            central.run();
-        });
+        // spawn central on main_core
+        let central_handle = Self::spawn_central(
+            main_core,
+            channel_name,
+            self.central_execution_channels,
+            self.central_state_channels,
+            self.tui_state,
+        );
         handles.push(central_handle);
 
-        // thread D: TUI (only if enabled)
-        if let Some(tui_state) = self.tui_state {
-            let tui_handle = thread::spawn(move || {
-                // small delay to let other threads start
-                std::thread::sleep(std::time::Duration::from_millis(500));
-
-                match TUI::new(tui_state) {
-                    Ok(mut tui) => {
-                        if let Err(e) = tui.run() {
-                            error!("TUI error: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        error!("failed to create TUI: {}", e);
-                    }
-                }
-            });
-            handles.push(tui_handle);
-        }
-
         handles
+    }
+
+    /// spawn tokio runtime on io_core for executors and state subscribers
+    fn spawn_io_runtime(
+        io_core: usize,
+        executor_configs: Vec<ExecutorConfig>,
+        state_configs: Vec<StateConfig>,
+    ) -> JoinHandle<()> {
+        thread::Builder::new()
+            .name("io-runtime".into())
+            .spawn(move || {
+                pin_to_core(io_core);
+
+                let rt = Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to create tokio runtime");
+
+                rt.block_on(async {
+                    // spawn all executors as tasks on this runtime
+                    for cfg in executor_configs {
+                        tokio::spawn(async move {
+                            let executor: AnyExecutor = match cfg.venue {
+                                Venue::Hyperliquid => AnyExecutor::Hyperliquid(
+                                    HyperliquidExecutor::new(cfg.passport_id, &cfg.passport_path)
+                                        .await
+                                        .expect("failed to create hyperliquid executor"),
+                                ),
+                                Venue::Binance => todo!(),
+                                Venue::Paradex => todo!(),
+                                Venue::Okx => todo!(),
+                            };
+
+                            let mut runner =
+                                ExecutorRunner::new(cfg.venue, cfg.inbound, cfg.outbound, executor);
+                            info!("executor for {:?} started", cfg.venue);
+                            runner.start().await;
+                        });
+                    }
+
+                    // spawn all state subscribers as tasks on this runtime
+                    for cfg in state_configs {
+                        tokio::spawn(async move {
+                            let subscriber: AnyStateSubscriber = match cfg.venue {
+                                Venue::Hyperliquid => AnyStateSubscriber::Hyperliquid(
+                                    HyperliquidStateSubscriber::new(
+                                        cfg.passport_id,
+                                        &cfg.passport_path,
+                                    )
+                                    .await
+                                    .expect("failed to create hyperliquid state subscriber"),
+                                ),
+                                Venue::Binance => todo!(),
+                                Venue::Paradex => todo!(),
+                                Venue::Okx => todo!(),
+                            };
+
+                            let mut runner = StateRunner::new(cfg.venue, cfg.outbound, subscriber);
+                            info!("state runner for {:?} started", cfg.venue);
+                            runner.start().await;
+                        });
+                    }
+
+                    // block forever - keep runtime alive
+                    std::future::pending::<()>().await;
+                });
+            })
+            .expect("failed to spawn io runtime thread")
+    }
+
+    /// spawn central on main_core
+    fn spawn_central(
+        main_core: usize,
+        channel_name: String,
+        central_execution_channels: Vec<CentralChannels>,
+        central_state_channels: Vec<CentralChannels>,
+        tui_state: Option<SharedTUIState>,
+    ) -> JoinHandle<()> {
+        thread::Builder::new()
+            .name("central".into())
+            .spawn(move || {
+                pin_to_core(main_core);
+
+                let mut central = Central::new(channel_name).expect("failed to create central");
+
+                if let Some(state) = tui_state {
+                    central.set_tui_state(state);
+                }
+
+                for ch in central_execution_channels {
+                    central.add_execution_channel(ch.venue, ch.sender, ch.receiver);
+                }
+
+                for ch in central_state_channels {
+                    central.add_state_channel(ch.venue, ch.sender, ch.receiver);
+                }
+
+                info!("central started");
+                central.run();
+            })
+            .expect("failed to spawn central thread")
     }
 }
 

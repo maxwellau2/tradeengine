@@ -253,6 +253,15 @@ impl HyperliquidStateSubscriber {
         let orig_sz: f64 = order.orig_sz.parse().unwrap_or(0.0);
         let filled_qty = orig_sz - sz;
 
+        info!(
+            coin = %order.coin,
+            status = %update.status,
+            sz = sz,
+            orig_sz = orig_sz,
+            filled_qty = filled_qty,
+            "hl state: parsed order update"
+        );
+
         // use cloid if present, otherwise fall back to oid as string
         // parse_cloid converts 0x00...05 back to "5" for cleaner display
         let client_order_id = order
@@ -333,6 +342,7 @@ impl HyperliquidStateSubscriber {
     }
 }
 
+#[async_trait::async_trait]
 impl StateSubscriber for HyperliquidStateSubscriber {
     type Error = HLStateError;
 

@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::types::common::{ClientOrderId, Order, OrderState, OrderType, TimeInForce, Venue};
-use crate::types::trade_server::{CancelOrder, PlaceOrder};
+use crate::types::common::{ClientOrderId, Order, OrderState, Side, Symbol};
+use crate::types::trade_server::PlaceOrder;
 
 /// tracks order state for central and strategy
 /// - confirmed: orders acknowledged by exchange
 /// - pending_new: orders sent but not yet acked
 /// - pending_cancel: cancel requests sent but not yet acked
+#[derive(Debug)]
 pub struct OrderTrackingUnit {
     confirmed: HashMap<ClientOrderId, Order>,
     pending_new: HashMap<ClientOrderId, PlaceOrder>,
@@ -63,7 +64,13 @@ impl OrderTrackingUnit {
         use tracing::debug;
 
         // remove from pending_new by cloid match
-        self.pending_new.remove(&order.client_order_id);
+        let was_pending = self.pending_new.remove(&order.client_order_id);
+        if was_pending.is_some() {
+            debug!(
+                cloid = %order.client_order_id,
+                "removed from pending_new"
+            );
+        }
 
         // handle terminal states
         match order.state {
@@ -154,6 +161,77 @@ impl OrderTrackingUnit {
     /// total inflight orders (confirmed + pending_new)
     pub fn total_open(&self) -> usize {
         self.confirmed.len() + self.pending_new.len()
+    }
+
+    /// check if any order exists for symbol and side (pending or confirmed)
+    pub fn has_order_for(&self, symbol: &Symbol, side: &Side) -> bool {
+        // check pending_new
+        for po in self.pending_new.values() {
+            if po.symbol == *symbol && po.side == *side {
+                return true;
+            }
+        }
+        // check confirmed
+        for order in self.confirmed.values() {
+            if order.symbol == *symbol && order.side == *side {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// check if duplicate order exists (same symbol, side, price, qty, tif)
+    pub fn has_duplicate(&self, order: &PlaceOrder) -> bool {
+        // check pending_new
+        for po in self.pending_new.values() {
+            if po.symbol == order.symbol
+                && po.side == order.side
+                && po.price == order.price
+                && po.qty == order.qty
+                && po.time_in_force == order.time_in_force
+            {
+                return true;
+            }
+        }
+        // check confirmed
+        for o in self.confirmed.values() {
+            if o.symbol == order.symbol
+                && o.side == order.side
+                && o.price == order.price
+                && o.qty == order.qty
+                && o.time_in_force == order.time_in_force
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// get all orders for symbol (pending + confirmed)
+    pub fn get_orders_for_symbol(&self, symbol: &Symbol) -> Vec<Order> {
+        let mut orders = Vec::new();
+        for po in self.pending_new.values() {
+            if po.symbol == *symbol {
+                orders.push(Order {
+                    client_order_id: po.client_order_id,
+                    symbol: po.symbol,
+                    venue: po.venue,
+                    side: po.side,
+                    price: po.price,
+                    qty: po.qty,
+                    filled_qty: 0.0,
+                    order_type: po.order_type,
+                    time_in_force: po.time_in_force,
+                    state: OrderState::PENDING_NEW,
+                });
+            }
+        }
+        for order in self.confirmed.values() {
+            if order.symbol == *symbol {
+                orders.push(order.clone());
+            }
+        }
+        orders
     }
 
     /// clear all state (e.g., on reconnect)

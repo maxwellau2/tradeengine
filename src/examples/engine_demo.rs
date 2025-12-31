@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicI8, AtomicU8};
+
 use log::warn;
 use md_feed::{
     md_connectors::{base::md_feed_base::MDFeed, hyperliquid::feed::HyperliquidMDFeed},
@@ -8,7 +10,10 @@ use md_feed::{
     },
     ts_protocol::iceoryx2_wrapper::EngineIceoryx2Wrapper,
     types::{
-        common::{ClientOrderId, Order, OrderType, PassportId, Side, TimeInForce, Venue},
+        common::{
+            ClientOrderId, Order, OrderType, PassportId, Side, TimeInForce, Venue,
+            client_order_id_from_u8,
+        },
         kline::Kline,
         orderbook::Orderbook,
         packet::{MDMessage, Packet},
@@ -16,32 +21,45 @@ use md_feed::{
     },
 };
 use ringbuf::{HeapRb, traits::Split};
-use tracing::{Level, debug, info};
-use tracing_subscriber;
+use tracing::{debug, info};
 
 struct DummyStrategy {
     passport_id: PassportId,
+    cloid: AtomicU8,
+}
+
+impl DummyStrategy {
+    fn next_cloid(&mut self) -> u8 {
+        self.cloid
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl Strategy for DummyStrategy {
-    fn on_orderbook(&mut self, _orderbook: &Orderbook, _ctx: &StrategyContext) {
-        debug!("Orderbook Received! {:?}", _orderbook);
-        // for i in 1..2{
+    fn on_orderbook(&mut self, ob: &Orderbook, _ctx: &StrategyContext) {
+        debug!("Orderbook Received! {:?}", ob);
+        let id = self.next_cloid();
         let order = PlaceOrder::new(
-            _orderbook.symbol,
-            _orderbook.venue,
-            ClientOrderId::new("1234"),
-            123.2,
-            123.2,
+            ob.symbol,
+            ob.venue,
+            client_order_id_from_u8(id),
+            ob.bids[3].price,
+            11.0 / ob.bids[3].price,
             Side::LONG,
-            TimeInForce::GTC,
+            TimeInForce::PO,
             OrderType::LIMIT,
-            self.passport_id.clone(),
+            self.passport_id,
         );
-        let res = _ctx.order_gateway.borrow_mut().place_order(order);
+
+        // check if duplicate exists before placing
+        if _ctx.has_duplicate(&order) {
+            debug!("skipping duplicate order");
+            return;
+        }
+        let res = _ctx.place_order(order);
         match res {
             Ok(val) => {
-                "yay!";
+                info!("Placed order {:?}", val);
             }
             Err(e) => {
                 warn!("Error {:?}", e);
@@ -64,7 +82,10 @@ impl Strategy for DummyStrategy {
 }
 
 async fn test_engine_creation() {
-    let strategy = Box::new(DummyStrategy { passport_id: 123 });
+    let strategy = Box::new(DummyStrategy {
+        passport_id: 123,
+        cloid: AtomicU8::new(0),
+    });
     // Dummy sender/receiver for testing (no real trade server)
     // struct DummySender;
     // impl OrderGatewaySend for DummySender {
@@ -86,7 +107,7 @@ async fn test_engine_creation() {
     // let receiver = DummyReceiver;
     const RING_CAPACITY: usize = 1 << 10;
     let channel_name = "channel1";
-    let mut engine = MarketDataEngine::new(strategy, 123, channel_name.into());
+    let mut engine = MarketDataEngine::new(strategy, 123, Venue::Hyperliquid, channel_name.into());
     let rb = HeapRb::<Packet<MDMessage>>::new(RING_CAPACITY);
     let (prod, cons) = rb.split();
     let subscriptions = vec![
@@ -102,8 +123,15 @@ async fn test_engine_creation() {
 
 #[tokio::main]
 pub async fn main() {
+    // use RUST_LOG env var, default to info if not set
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
     tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG) // Filter events at INFO level and above
-        .init(); // Install the subscriber
+        .with_env_filter(filter)
+        .with_line_number(true)
+        .with_file(true)
+        .init();
+
     test_engine_creation().await;
 }

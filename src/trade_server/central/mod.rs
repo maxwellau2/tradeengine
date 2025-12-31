@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
 use crate::trade_server::state::StateManager;
-use crate::tui::{SharedTUIState, should_shutdown};
+use crate::tui::{SharedTUIState, TUI, should_shutdown};
 use crate::types::trade_server::EngineTSMessageType::*;
 use crate::types::trade_server::TSEngineMessageType::*;
+use crate::types::trade_server::{QryBalanceResp, QryOrderResp, QryPositionResp};
 use crate::{
     ts_protocol::iceoryx2_wrapper::TSIceoryx2Wrapper,
     types::{
         clock::timestamp_nanos,
-        common::Venue,
+        common::{Order, OrderState, Venue},
         packet::{Packet, TSInternalMessage},
         trade_server::TSEngineMessage,
     },
@@ -17,7 +18,7 @@ use ringbuf::{
     HeapCons, HeapProd,
     traits::{Consumer, Producer},
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 const RB_SIZE: usize = 1 << 10;
 
@@ -97,9 +98,90 @@ impl Central {
             message: HeartbeatResponse {},
         });
         match res {
-            Ok(_) => debug!("heartbeat response sent"),
+            Ok(_) => trace!("central tx: HeartbeatResponse"),
             Err(e) => error!("failed to send heartbeat response: {:?}", e),
         }
+    }
+
+    fn send_qry_orders_resp(&mut self) {
+        let orders = self.state.orders.get_all_confirmed();
+        if orders.is_empty() {
+            let resp = QryOrderResp::empty();
+            if let Err(e) = self.outer_protocol.send(TSEngineMessage {
+                timestamp: timestamp_nanos(),
+                message: QryOrdersResp(resp),
+            }) {
+                error!("failed to send qry orders resp: {:?}", e);
+            }
+            return;
+        }
+
+        for (i, order) in orders.iter().enumerate() {
+            let is_last = i == orders.len() - 1;
+            let resp = QryOrderResp::item(*order, is_last);
+            if let Err(e) = self.outer_protocol.send(TSEngineMessage {
+                timestamp: timestamp_nanos(),
+                message: QryOrdersResp(resp),
+            }) {
+                error!("failed to send qry orders resp: {:?}", e);
+                break;
+            }
+        }
+        debug!("sent {} orders in qry response", orders.len());
+    }
+
+    fn send_qry_positions_resp(&mut self) {
+        let positions = self.state.positions.get_all();
+        if positions.is_empty() {
+            let resp = QryPositionResp::empty();
+            if let Err(e) = self.outer_protocol.send(TSEngineMessage {
+                timestamp: timestamp_nanos(),
+                message: QryPositionsResp(resp),
+            }) {
+                error!("failed to send qry positions resp: {:?}", e);
+            }
+            return;
+        }
+
+        for (i, position) in positions.iter().enumerate() {
+            let is_last = i == positions.len() - 1;
+            let resp = QryPositionResp::item(*position, is_last);
+            if let Err(e) = self.outer_protocol.send(TSEngineMessage {
+                timestamp: timestamp_nanos(),
+                message: QryPositionsResp(resp),
+            }) {
+                error!("failed to send qry positions resp: {:?}", e);
+                break;
+            }
+        }
+        debug!("sent {} positions in qry response", positions.len());
+    }
+
+    fn send_qry_balances_resp(&mut self) {
+        let balances = self.state.balances.get_all();
+        if balances.is_empty() {
+            let resp = QryBalanceResp::empty();
+            if let Err(e) = self.outer_protocol.send(TSEngineMessage {
+                timestamp: timestamp_nanos(),
+                message: QryBalancesResp(resp),
+            }) {
+                error!("failed to send qry balances resp: {:?}", e);
+            }
+            return;
+        }
+
+        for (i, balance) in balances.iter().enumerate() {
+            let is_last = i == balances.len() - 1;
+            let resp = QryBalanceResp::item(*balance, is_last);
+            if let Err(e) = self.outer_protocol.send(TSEngineMessage {
+                timestamp: timestamp_nanos(),
+                message: QryBalancesResp(resp),
+            }) {
+                error!("failed to send qry balances resp: {:?}", e);
+                break;
+            }
+        }
+        debug!("sent {} balances in qry response", balances.len());
     }
 
     fn poll_outer_protocol(&mut self) {
@@ -110,7 +192,6 @@ impl Central {
                     PlaceOrder(place_order) => {
                         info!(venue = ?place_order.venue, symbol = %place_order.symbol, "place order received");
                         self.state.orders.add_pending_new(place_order);
-                        self.sync_tui_state(); // show pending order immediately
                         self.forward_to_execution(
                             TSInternalMessage::PlaceOrder(place_order),
                             place_order.venue,
@@ -133,9 +214,21 @@ impl Central {
                             replace_order.venue,
                         );
                     }
-                    Heartbeat(_) => self.send_heartbeat(),
-                    others => {
-                        debug!("received unhandled message: {:?}", others);
+                    Heartbeat(_) => {
+                        debug!("central rx: Heartbeat from engine");
+                        self.send_heartbeat();
+                    }
+                    QryOpenOrders(_) => {
+                        info!("qry open orders received");
+                        self.send_qry_orders_resp();
+                    }
+                    QryPositions(_) => {
+                        info!("qry positions received");
+                        self.send_qry_positions_resp();
+                    }
+                    QryBalance(_) => {
+                        info!("qry balances received");
+                        self.send_qry_balances_resp();
                     }
                 }
             }
@@ -146,14 +239,14 @@ impl Central {
     }
 
     pub fn poll_state_receivers(&mut self) {
-        let mut updated = false;
+        // collect updates first to avoid borrow conflict
+        let mut updates = Vec::new();
         for (_, v) in self.state_receivers.iter_mut() {
             while let Some(packet) = v.try_pop() {
                 debug!("state update received: {:?}", packet);
                 match packet.body {
                     TSInternalMessage::StateUpdate(update) => {
-                        self.state.apply(update);
-                        updated = true;
+                        updates.push(update);
                     }
                     _ => {
                         warn!("unexpected message type in state receiver");
@@ -162,9 +255,48 @@ impl Central {
             }
         }
 
-        // sync to tui state if updated
-        if updated {
-            self.sync_tui_state();
+        // now process collected updates
+        for update in updates {
+            // forward to engine first
+            self.send_state_update_to_engine(&update);
+            // then apply locally
+            self.state.apply(update);
+        }
+    }
+
+    /// forward state update to engine via iceoryx2
+    fn send_state_update_to_engine(&mut self, update: &crate::types::trade_server::StateUpdate) {
+        use crate::types::trade_server::StateUpdate;
+
+        let message = match update {
+            StateUpdate::OrderUpdate(order) => {
+                info!(
+                    "central tx: OrderUpdate to engine, cloid={}",
+                    order.client_order_id
+                );
+                TSEngineMessage {
+                    timestamp: timestamp_nanos(),
+                    message: OrderUpdate(*order),
+                }
+            }
+            StateUpdate::PositionUpdate(position) => {
+                debug!("central tx: PositionUpdate to engine");
+                TSEngineMessage {
+                    timestamp: timestamp_nanos(),
+                    message: PositionUpdate(*position),
+                }
+            }
+            StateUpdate::BalanceUpdate(balance) => {
+                debug!("central tx: BalanceUpdate to engine");
+                TSEngineMessage {
+                    timestamp: timestamp_nanos(),
+                    message: BalanceUpdate(*balance),
+                }
+            }
+        };
+
+        if let Err(e) = self.outer_protocol.send(message) {
+            error!("failed to send state update to engine: {:?}", e);
         }
     }
 
@@ -184,8 +316,6 @@ impl Central {
     }
 
     pub fn poll_execution_receivers(&mut self) {
-        let mut needs_tui_sync = false;
-
         for (_, v) in self.execution_receivers.iter_mut() {
             while let Some(packet) = v.try_pop() {
                 match packet.body {
@@ -193,22 +323,36 @@ impl Central {
                         if resp.is_success() {
                             // order confirmed, will be tracked via state updates
                         } else {
-                            // order rejected, remove from pending
+                            // order rejected - create rejected order and send to engine
+                            let rejected_order = Order {
+                                client_order_id: resp.request.client_order_id,
+                                symbol: resp.request.symbol,
+                                venue: resp.request.venue,
+                                side: resp.request.side,
+                                price: resp.request.price,
+                                qty: resp.request.qty,
+                                filled_qty: 0.0,
+                                order_type: resp.request.order_type,
+                                time_in_force: resp.request.time_in_force,
+                                state: OrderState::REJECTED,
+                            };
+
+                            // send rejection to engine so it removes from pending
                             debug!(
                                 cloid = %resp.request.client_order_id,
-                                "removing rejected order from pending"
+                                "sending rejected order to engine"
                             );
-                            let removed = self
-                                .state
+                            if let Err(e) = self.outer_protocol.send(TSEngineMessage {
+                                timestamp: timestamp_nanos(),
+                                message: OrderUpdate(rejected_order),
+                            }) {
+                                error!("failed to send rejection to engine: {:?}", e);
+                            }
+
+                            // remove from local pending
+                            self.state
                                 .orders
                                 .remove_pending_new(&resp.request.client_order_id);
-                            if removed.is_none() {
-                                warn!(
-                                    cloid = %resp.request.client_order_id,
-                                    "rejected order not found in pending"
-                                );
-                            }
-                            needs_tui_sync = true;
                         }
                     }
                     TSInternalMessage::CancelOrderResp(resp) => {
@@ -228,25 +372,46 @@ impl Central {
                 }
             }
         }
-
-        if needs_tui_sync {
-            self.sync_tui_state();
-        }
     }
 
-    pub fn poll_ingress_queues_once(&mut self) {
+    /// run one iteration - pure business logic, no TUI
+    pub fn run_once(&mut self) {
         self.poll_outer_protocol();
         self.poll_execution_receivers();
         self.poll_state_receivers();
     }
 
+    /// render TUI if enabled - call this in cold path, separate from run_once
+    fn maybe_render_tui(&mut self, tui: &mut Option<TUI>, iter: &mut u64) {
+        *iter = iter.wrapping_add(1);
+        if *iter % 1000 == 0 {
+            if let Some(tui) = tui {
+                self.sync_tui_state();
+                let _ = tui.draw_once();
+                tui.check_quit();
+            }
+        }
+    }
+
+    /// create TUI from state if available
+    fn create_tui(&self) -> Option<TUI> {
+        self.tui_state
+            .as_ref()
+            .and_then(|state| TUI::with_title(state.clone(), "Trade Server".to_string()).ok())
+    }
+
     pub fn run(&mut self) {
+        let mut tui = self.create_tui();
+        let mut iter = 0u64;
+
         loop {
             if should_shutdown() {
                 info!("central shutting down");
                 break;
             }
-            self.poll_ingress_queues_once();
+
+            self.run_once(); // hot path - pure business logic
+            self.maybe_render_tui(&mut tui, &mut iter); // cold path - optional TUI
         }
     }
 }

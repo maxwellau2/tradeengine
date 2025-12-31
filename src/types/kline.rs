@@ -4,7 +4,10 @@ use crate::types::common::{KlineInterval, Symbol, Venue, symbol_from_str};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Kline {
-    pub time: u64,
+    /// candle open time (t field from hyperliquid)
+    pub open_time: u64,
+    /// candle close time (T field from hyperliquid)
+    pub close_time: u64,
     pub symbol: Symbol,
     pub venue: Venue,
     pub interval: KlineInterval,
@@ -18,7 +21,8 @@ pub struct Kline {
 
 impl Kline {
     pub fn new(
-        time: u64,
+        open_time: u64,
+        close_time: u64,
         symbol: Symbol,
         venue: Venue,
         interval: KlineInterval,
@@ -29,8 +33,9 @@ impl Kline {
         volume: f64,
         is_closed: bool,
     ) -> Self {
-        return Self {
-            time,
+        Self {
+            open_time,
+            close_time,
             symbol,
             venue,
             interval,
@@ -40,7 +45,24 @@ impl Kline {
             close,
             volume,
             is_closed,
-        };
+        }
+    }
+
+    /// create a default/empty kline
+    pub fn default_with_venue(venue: Venue) -> Self {
+        Self {
+            open_time: 0,
+            close_time: 0,
+            symbol: symbol_from_str(""),
+            venue,
+            interval: KlineInterval::M1,
+            open: 0.0,
+            high: 0.0,
+            low: 0.0,
+            close: 0.0,
+            volume: 0.0,
+            is_closed: false,
+        }
     }
 
     pub fn timeframe_from_hyperliquid(s: &str) -> KlineInterval {
@@ -52,8 +74,10 @@ impl Kline {
             // there is defo more..
         }
     }
+    /// update kline from hyperliquid json
     pub fn update_from_hyperliquid(&mut self, kline: &serde_json::Value) {
-        self.time = kline.get("T").and_then(|v| v.as_u64()).unwrap_or(0);
+        self.open_time = kline.get("t").and_then(|v| v.as_u64()).unwrap_or(0);
+        self.close_time = kline.get("T").and_then(|v| v.as_u64()).unwrap_or(0);
         self.open = kline
             .get("o")
             .and_then(|v| v.as_str())
@@ -82,6 +106,8 @@ impl Kline {
         self.symbol = symbol_from_str(kline.get("s").and_then(|v| v.as_str()).unwrap_or(""));
         let interval = kline.get("i").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
         self.interval = Kline::timeframe_from_hyperliquid(interval);
-        self.is_closed = true; // HL only pushes finished klines
+
+        // is_closed will be set by the handler when it detects a new candle
+        self.is_closed = false;
     }
 }

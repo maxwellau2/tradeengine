@@ -89,7 +89,7 @@ impl ExecutorRunner {
         };
 
         let latency_us = (timestamp_nanos_precise() - val.timestamp) / 1000;
-        info!(latency_us, "central->executor latency");
+        info!(latency_us, "engine->executor latency");
         debug!(venue = ?self.venue, "executor received: {:?}", val.body);
 
         let result = match val.body {

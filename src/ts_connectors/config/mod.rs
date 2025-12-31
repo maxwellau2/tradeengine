@@ -6,6 +6,10 @@ use crate::types::common::{PassportId, Venue};
 
 #[derive(Debug, Deserialize)]
 pub struct TSConfig {
+    /// cpu core for central sync loop (hot path)
+    pub main_core: usize,
+    /// cpu core for tokio runtime (executors + state subscribers)
+    pub io_core: usize,
     pub passport_path: String,
     pub passport_id: PassportId,
     pub exchanges: Vec<String>,

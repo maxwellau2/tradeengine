@@ -1,5 +1,11 @@
+main_core: 2
+io_core: 3
 channel_name: channel1
 passport_id: 1234
-symbols:
-    - hyperliquid: [BTC, ETH, LINK]
-    - binance: [BTCUSDT, ETHUSDT, LINKUSDT]
+subscriptions:
+    hyperliquid:
+        kline: [BTC::M1, ETH::M1, LINK::M5]
+        orderbook: [BTC, ETH, LINK]
+    binance:
+        kline: [BTCUSDT::M1, ETHUSDT::H1, LINKUSDT::D1]
+        orderbook: [BTCUSDT, ETHUSDT, LINKUSDT]

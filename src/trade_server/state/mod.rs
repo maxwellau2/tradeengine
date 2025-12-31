@@ -14,6 +14,7 @@ use crate::types::common::{Balance, Order, Position, Symbol};
 use crate::types::trade_server::StateUpdate;
 
 /// unified state manager combining all tracking units
+#[derive(Debug)]
 pub struct StateManager {
     pub orders: OrderTrackingUnit,
     pub positions: PositionTrackingUnit,

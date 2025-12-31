@@ -44,10 +44,14 @@ impl OrderGatewayRecv for TSEngineReceiver {
             Ok(Some(sample)) => {
                 // Dereference the sample to copy the message
                 // The original stays in shared memory
+                tracing::debug!("engine recv: got message from TS");
                 Some(*sample)
             }
             Ok(None) => None, // No message available
-            Err(_) => None,   // Error receiving
+            Err(e) => {
+                tracing::error!("engine recv error: {:?}", e);
+                None
+            }
         }
     }
 }
@@ -82,6 +86,8 @@ impl EngineIceoryx2Wrapper {
         let service_recv = node
             .service_builder(&service_name_recv)
             .publish_subscribe::<TSEngineMessage>()
+            // increase buffer to avoid dropping messages during query responses
+            .subscriber_max_buffer_size(1024)
             .open_or_create()
             .map_err(|e| format!("Failed to open/create recv service: {:?}", e))?;
 
@@ -150,6 +156,8 @@ impl TSIceoryx2Wrapper {
         let service_send = node
             .service_builder(&service_name_send)
             .publish_subscribe::<TSEngineMessage>()
+            // increase buffer to avoid dropping messages during query responses
+            .subscriber_max_buffer_size(1024)
             .open_or_create()
             .map_err(|e| format!("Failed to open/create send service: {:?}", e))?;
 

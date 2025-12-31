@@ -45,10 +45,6 @@ name = "main"
 path = "src/main.rs"
 
 [[bin]]
-name = "aeron_publisher"
-path = "src/examples/aeron_publisher.rs"
-
-[[bin]]
 name = "paradex_ws_example"
 path = "src/examples/paradex_ws_example.rs"
 
@@ -59,6 +55,10 @@ path = "src/examples/hyperliquid_publisher.rs"
 [[bin]]
 name = "engine_demo"
 path = "src/examples/engine_demo.rs"
+
+[[bin]]
+name = "engine_runner_demo"
+path = "src/examples/engine_runner_demo.rs"
 
 [[bin]]
 name = "ts_demo"

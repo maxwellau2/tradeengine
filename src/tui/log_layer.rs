@@ -23,9 +23,11 @@ impl<S: Subscriber> Layer<S> for TUILogLayer {
         let mut visitor = LogVisitor::default();
         event.record(&mut visitor);
 
-        let level = event.metadata().level();
-        let target = event.metadata().target();
-        let msg = format!("{} {} {}", level, target, visitor.message);
+        let meta = event.metadata();
+        let level = meta.level();
+        let file = meta.file().unwrap_or("unknown");
+        let line = meta.line().unwrap_or(0);
+        let msg = format!("{} {}:{} {}", level, file, line, visitor.message);
 
         // lock-free update: load current state, add log, store new state
         let current = self.state.load();

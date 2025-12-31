@@ -13,12 +13,12 @@ use ethers::prelude::LocalWallet;
 use futures_util::{SinkExt, StreamExt};
 pub use hyperliquid_utils::parse_cloid;
 use hyperliquid_utils::{
-    HyperliquidResponse, MetaResponse, format_cloid, format_float, tif_to_hl, to_cancel_resp,
-    to_place_resp, to_replace_resp,
+    HyperliquidResponse, MetaResponse, format_cloid, format_float, format_size, tif_to_hl,
+    to_cancel_resp, to_place_resp, to_replace_resp,
 };
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::{Interval, interval};
@@ -37,11 +37,13 @@ pub struct HyperliquidExecutor {
     ws_stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     is_mainnet: bool,
     vault_address: Option<String>,
-    // symbol -> asset index mapping
-    asset_map: HashMap<String, u32>,
+    // symbol -> (asset index, sz_decimals)
+    asset_map: HashMap<String, (u32, u8)>,
     req_id: AtomicU8,
-    req_map: [Option<EngineTSMessageType>; u8::MAX as usize],
+    req_map: [Option<EngineTSMessageType>; 256],
     heartbeat_interval: Interval,
+    // monotonic nonce to avoid duplicate nonce errors
+    last_nonce: AtomicU64,
 }
 
 impl HyperliquidExecutor {
@@ -87,6 +89,24 @@ impl HyperliquidExecutor {
         self.req_id.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// get next nonce, guaranteed to be monotonically increasing
+    /// uses timestamp_millis but ensures it never returns the same value twice
+    fn next_nonce(&self) -> u64 {
+        let now = timestamp_millis();
+        loop {
+            let last = self.last_nonce.load(Ordering::Relaxed);
+            let next = now.max(last + 1);
+            if self
+                .last_nonce
+                .compare_exchange(last, next, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                return next;
+            }
+            // another thread updated, retry
+        }
+    }
+
     // build modify action
     fn build_modify_action(
         cloid: &str,
@@ -123,13 +143,14 @@ impl HyperliquidExecutor {
             self.connect().await;
         }
 
+        // get nonce before borrowing ws_stream to avoid borrow conflict
+        let nonce = self.next_nonce();
+        let vault_ref = self.vault_address.as_deref();
+
         let ws = self
             .ws_stream
             .as_mut()
             .ok_or(HLExecutorError::NotConnected)?;
-
-        let nonce = timestamp_millis();
-        let vault_ref = self.vault_address.as_deref();
 
         // sign the action
         let sig = sign_l1_action(
@@ -171,10 +192,10 @@ impl HyperliquidExecutor {
         Ok(())
     }
 
-    // get asset index from symbol
-    fn get_asset_index(&self, symbol: &str) -> Option<u32> {
-        if let Some(&idx) = self.asset_map.get(symbol) {
-            return Some(idx);
+    // get asset info (index, sz_decimals) from symbol
+    fn get_asset_info(&self, symbol: &str) -> Option<(u32, u8)> {
+        if let Some(&info) = self.asset_map.get(symbol) {
+            return Some(info);
         }
         // try base symbol (e.g. "BTC-PERP" -> "BTC")
         let base = symbol.split('-').next().unwrap_or(symbol);
@@ -201,7 +222,8 @@ impl HyperliquidExecutor {
 
         let meta: MetaResponse = res.json().await?;
         for (idx, asset) in meta.universe.iter().enumerate() {
-            self.asset_map.insert(asset.name.clone(), idx as u32);
+            self.asset_map
+                .insert(asset.name.clone(), (idx as u32, asset.sz_decimals));
         }
         info!(
             "loaded {} asset mappings from meta endpoint",
@@ -256,6 +278,7 @@ impl HyperliquidExecutor {
     }
 }
 
+#[async_trait::async_trait]
 impl Executor for HyperliquidExecutor {
     type Error = HLExecutorError;
 
@@ -291,8 +314,9 @@ impl Executor for HyperliquidExecutor {
             vault_address: cred.vault_address,
             asset_map: HashMap::new(),
             req_id: AtomicU8::new(0),
-            req_map: [None; u8::MAX as usize],
+            req_map: [None; 256],
             heartbeat_interval: interval(Duration::from_secs(30)),
+            last_nonce: AtomicU64::new(0),
         };
         executor.load_asset_map().await?;
 
@@ -318,13 +342,13 @@ impl Executor for HyperliquidExecutor {
 
     async fn place_order(&mut self, order: trade_server::PlaceOrder) -> HyperliquidResult<()> {
         let symbol = order.symbol.as_str();
-        let asset_idx = self
-            .get_asset_index(symbol)
+        let (asset_idx, sz_decimals) = self
+            .get_asset_info(symbol)
             .ok_or_else(|| HLExecutorError::UnknownSymbol(symbol.to_string()))?;
 
         let is_buy = matches!(order.side, Side::LONG);
         let price = format_float(order.price);
-        let size = format_float(order.qty);
+        let size = format_size(order.qty, sz_decimals);
         let tif = tif_to_hl(order.time_in_force);
         let cloid_raw = order.client_order_id.as_str();
         let cloid_formatted = if cloid_raw.is_empty() {
@@ -352,8 +376,8 @@ impl Executor for HyperliquidExecutor {
 
     async fn cancel_order(&mut self, cancel: trade_server::CancelOrder) -> HyperliquidResult<()> {
         let symbol = cancel.symbol.as_str();
-        let asset_idx = self
-            .get_asset_index(symbol)
+        let (asset_idx, _) = self
+            .get_asset_info(symbol)
             .ok_or_else(|| HLExecutorError::UnknownSymbol(symbol.to_string()))?;
 
         let cloid_raw = cancel.client_order_id.as_str();
@@ -376,8 +400,8 @@ impl Executor for HyperliquidExecutor {
         replace: trade_server::ReplaceOrder,
     ) -> HyperliquidResult<()> {
         let symbol = replace.symbol.as_str();
-        let asset_idx = self
-            .get_asset_index(symbol)
+        let (asset_idx, sz_decimals) = self
+            .get_asset_info(symbol)
             .ok_or_else(|| HLExecutorError::UnknownSymbol(symbol.to_string()))?;
 
         let cloid_raw = replace.client_order_id.as_str();
@@ -388,7 +412,7 @@ impl Executor for HyperliquidExecutor {
 
         let is_buy = matches!(replace.side, Side::LONG);
         let price = format_float(replace.new_price);
-        let size = format_float(replace.new_qty);
+        let size = format_size(replace.new_qty, sz_decimals);
         let tif = tif_to_hl(replace.time_in_force);
 
         let action = HyperliquidExecutor::build_modify_action(

@@ -1,13 +1,16 @@
 pub mod error;
 pub mod hyperliquid;
 
+use async_trait::async_trait;
+
 use crate::ts_connectors::state::error::{StateError, StateResult};
 use crate::ts_connectors::state::hyperliquid::HyperliquidStateSubscriber;
 use crate::types::common::PassportId;
 use crate::types::trade_server::StateUpdate;
 use std::error::Error;
 
-pub trait StateSubscriber {
+#[async_trait]
+pub trait StateSubscriber: Send {
     type Error: Error + Send + Sync + 'static;
     async fn new(passport_id: PassportId, cfg_path: &str) -> StateResult<Self>
     where

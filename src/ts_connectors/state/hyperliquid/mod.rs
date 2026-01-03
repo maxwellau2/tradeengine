@@ -420,39 +420,37 @@ impl StateSubscriber for HyperliquidStateSubscriber {
         }
         let ws = self.ws_stream.as_mut()?;
 
+        // select between heartbeat and ws message
         tokio::select! {
             biased;
 
+            // prioritize ws messages
             msg = ws.next() => {
                 match msg {
                     Some(Ok(Message::Text(txt))) => {
-                        // debug!("state ws received: {}", txt);
                         self.parse_into_queue(&txt);
                     }
                     Some(Ok(Message::Ping(data))) => {
                         let _ = ws.send(Message::Pong(data)).await;
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
-                        warn!("state ws disconnected, will reconnect");
+                        warn!("hl state ws disconnected, will reconnect");
                         self.ws_stream = None;
                     }
                     _ => {}
                 }
             }
             _ = self.heartbeat_interval.tick() => {
-                trace!("state ws sending heartbeat");
-                // hyperliquid uses json ping, not websocket ping frame
+                trace!("hl state ws sending heartbeat");
                 let ping_msg = Message::Text(r#"{"method":"ping"}"#.to_string());
                 if ws.send(ping_msg).await.is_err() {
-                    warn!("state ws heartbeat failed");
+                    warn!("hl state ws heartbeat failed");
                     self.ws_stream = None;
                 }
             }
-            // yield immediately if no data ready
-            _ = tokio::task::yield_now() => {}
         }
 
-        // always try to drain queue after ws read
+        // try to drain queue after ws read
         self.pending.try_pop()
     }
 

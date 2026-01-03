@@ -1,5 +1,7 @@
 use crate::types::{
+    asset_ctx::AssetCtx,
     clock::timestamp_nanos_precise,
+    funding::FundingInfo,
     kline::Kline,
     orderbook::Orderbook,
     trade_server::{
@@ -30,6 +32,8 @@ impl<T> Packet<T> {
 pub enum MDMessage {
     Orderbook(Orderbook),
     Kline(Kline),
+    AssetCtx(AssetCtx),
+    FundingInfo(FundingInfo),
 }
 
 #[derive(Debug, Clone)]

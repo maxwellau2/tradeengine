@@ -1,11 +1,28 @@
 use std::collections::HashMap;
 
-use crate::types::common::{Balance, Symbol};
+use crate::types::common::{Balance, Symbol, Venue};
 
-/// tracks balance state per coin
+/// composite key for balance: (coin, venue)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct BalanceKey {
+    coin: Symbol,
+    venue: Venue,
+}
+
+impl BalanceKey {
+    fn new(coin: Symbol, venue: Venue) -> Self {
+        Self { coin, venue }
+    }
+
+    fn from_balance(balance: &Balance) -> Self {
+        Self::new(balance.coin, balance.venue)
+    }
+}
+
+/// tracks balance state per (coin, venue)
 #[derive(Debug)]
 pub struct BalanceTrackingUnit {
-    balances: HashMap<Symbol, Balance>,
+    balances: HashMap<BalanceKey, Balance>,
 }
 
 impl BalanceTrackingUnit {
@@ -15,29 +32,32 @@ impl BalanceTrackingUnit {
         }
     }
 
-    /// upsert balance for coin
+    /// upsert balance for (coin, venue)
     pub fn upsert(&mut self, balance: Balance) {
-        self.balances.insert(balance.coin, balance);
+        self.balances
+            .insert(BalanceKey::from_balance(&balance), balance);
     }
 
-    /// get balance for coin
-    pub fn get(&self, coin: &Symbol) -> Option<&Balance> {
-        self.balances.get(coin)
+    /// get balance for (coin, venue)
+    pub fn get(&self, coin: &Symbol, venue: Venue) -> Option<&Balance> {
+        self.balances.get(&BalanceKey::new(*coin, venue))
     }
 
-    /// get balance qty for coin, returns 0 if not found
-    pub fn qty(&self, coin: &Symbol) -> f64 {
-        self.balances.get(coin).map_or(0.0, |b| b.qty)
+    /// get balance qty for (coin, venue), returns 0 if not found
+    pub fn qty(&self, coin: &Symbol, venue: Venue) -> f64 {
+        self.balances
+            .get(&BalanceKey::new(*coin, venue))
+            .map_or(0.0, |b| b.qty)
     }
 
-    /// check if we have balance for coin
-    pub fn has(&self, coin: &Symbol) -> bool {
-        self.balances.contains_key(coin)
+    /// check if we have balance for (coin, venue)
+    pub fn has(&self, coin: &Symbol, venue: Venue) -> bool {
+        self.balances.contains_key(&BalanceKey::new(*coin, venue))
     }
 
-    /// remove balance for coin
-    pub fn remove(&mut self, coin: &Symbol) -> Option<Balance> {
-        self.balances.remove(coin)
+    /// remove balance for (coin, venue)
+    pub fn remove(&mut self, coin: &Symbol, venue: Venue) -> Option<Balance> {
+        self.balances.remove(&BalanceKey::new(*coin, venue))
     }
 
     /// all balances
@@ -50,9 +70,9 @@ impl BalanceTrackingUnit {
         self.balances.values().cloned().collect()
     }
 
-    /// all coins with balance
-    pub fn coins(&self) -> impl Iterator<Item = &Symbol> {
-        self.balances.keys()
+    /// all (coin, venue) pairs with balance
+    pub fn keys(&self) -> impl Iterator<Item = (Symbol, Venue)> + '_ {
+        self.balances.keys().map(|k| (k.coin, k.venue))
     }
 
     /// count of tracked coins

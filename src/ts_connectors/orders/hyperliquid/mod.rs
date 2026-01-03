@@ -10,7 +10,7 @@ use crate::types::trade_server::OrderResponse;
 use crate::types::trade_server::{self, EngineTSMessageType};
 use error::{HLExecutorError, HyperliquidResult};
 use ethers::prelude::LocalWallet;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 pub use hyperliquid_utils::parse_cloid;
 use hyperliquid_utils::{
     HyperliquidResponse, MetaResponse, format_cloid, format_float, format_size, tif_to_hl,
@@ -435,38 +435,40 @@ impl Executor for HyperliquidExecutor {
 
         let ws = self.ws_stream.as_mut()?;
 
-        tokio::select! {
-            biased;
+        // check heartbeat first (non-blocking via poll_tick)
+        if std::future::poll_fn(|cx| match self.heartbeat_interval.poll_tick(cx) {
+            std::task::Poll::Ready(_) => std::task::Poll::Ready(true),
+            std::task::Poll::Pending => std::task::Poll::Ready(false),
+        })
+        .await
+        {
+            trace!("sending heartbeat ping");
+            let ping_msg = Message::Text(r#"{"method":"ping"}"#.to_string());
+            // fire and forget - we'll detect disconnect on next recv
+            let _ = ws.send(ping_msg).now_or_never();
+        }
 
-            // non-blocking poll with immediate timeout
-            msg = ws.next() => {
-                match msg {
-                    Some(Ok(Message::Text(txt))) => {
-                        return self.parse(&txt);
-                    }
-                    Some(Ok(Message::Ping(data))) => {
-                        let _ = ws.send(Message::Pong(data)).await;
-                    }
-                    Some(Ok(Message::Pong(_))) => {
-                        trace!("received ws pong frame");
-                    }
-                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
-                        warn!("ws disconnected, will reconnect");
-                        self.ws_stream = None;
-                    }
-                    _ => {}
-                }
+        // non-blocking check for ws message using now_or_never
+        // this returns immediately if no data is ready
+        let msg = ws.next().now_or_never();
+
+        match msg {
+            Some(Some(Ok(Message::Text(txt)))) => {
+                return self.parse(&txt);
             }
-            _ = self.heartbeat_interval.tick() => {
-                trace!("sending heartbeat ping");
-                let ping_msg = Message::Text(r#"{"method":"ping"}"#.to_string());
-                if ws.send(ping_msg).await.is_err() {
-                    warn!("heartbeat failed, ws disconnected");
-                    self.ws_stream = None;
-                }
+            Some(Some(Ok(Message::Ping(data)))) => {
+                let _ = ws.send(Message::Pong(data)).now_or_never();
             }
-            // yield immediately if no data ready
-            _ = tokio::task::yield_now() => {}
+            Some(Some(Ok(Message::Pong(_)))) => {
+                trace!("received ws pong frame");
+            }
+            Some(Some(Ok(Message::Close(_)))) | Some(Some(Err(_))) | Some(None) => {
+                warn!("ws disconnected, will reconnect");
+                self.ws_stream = None;
+            }
+            // None means no data ready - this is the expected fast path
+            None => {}
+            _ => {}
         }
         None
     }

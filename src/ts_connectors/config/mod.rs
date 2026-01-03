@@ -8,8 +8,11 @@ use crate::types::common::{PassportId, Venue};
 pub struct TSConfig {
     /// cpu core for central sync loop (hot path)
     pub main_core: usize,
-    /// cpu core for tokio runtime (executors + state subscribers)
-    pub io_core: usize,
+    /// starting cpu core for executors - each executor gets main_core + 1 + index
+    /// e.g. if executor_core_start=2 and you have 2 exchanges, they get cores 2 and 3
+    pub executor_core_start: usize,
+    /// cpu core for state subscribers (shared runtime, less latency sensitive)
+    pub state_core: usize,
     pub passport_path: String,
     pub passport_id: PassportId,
     pub exchanges: Vec<String>,

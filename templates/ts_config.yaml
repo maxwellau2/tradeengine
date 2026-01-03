@@ -1,5 +1,9 @@
+# central sync loop (hot path)
 main_core: 1
-io_core: 3
+# executors get cores starting here (e.g. 2 exchanges = cores 2, 3)
+executor_core_start: 2
+# state subscribers (less latency sensitive)
+state_core: 4
 passport_path: templates/passport_template.json
 passport_id: 1234
 exchanges: [Hyperliquid]

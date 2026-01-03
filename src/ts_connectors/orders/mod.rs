@@ -1,5 +1,6 @@
 pub mod error;
 pub mod hyperliquid;
+pub mod paradex_light;
 pub mod signature_utls;
 
 use std::error::Error;
@@ -13,6 +14,7 @@ use crate::types::{
 };
 
 pub use hyperliquid::HyperliquidExecutor;
+pub use paradex_light::ParadexLightExecutor;
 
 #[async_trait]
 pub trait Executor: Send {
@@ -36,39 +38,42 @@ pub trait Executor: Send {
 /// uses static dispatch internally (match arms) so no vtable overhead
 pub enum AnyExecutor {
     Hyperliquid(HyperliquidExecutor),
-    // add other venues here as they're implemented:
-    // Binance(BinanceExecutor),
-    // Paradex(ParadexExecutor),
+    ParadexLight(ParadexLightExecutor),
 }
 
 impl AnyExecutor {
     pub async fn connect(&mut self) {
         match self {
             AnyExecutor::Hyperliquid(e) => e.connect().await,
+            AnyExecutor::ParadexLight(e) => e.connect().await,
         }
     }
 
     pub async fn produce(&mut self) -> Option<OrderResponse> {
         match self {
             AnyExecutor::Hyperliquid(e) => e.produce().await,
+            AnyExecutor::ParadexLight(e) => e.produce().await,
         }
     }
 
     pub async fn place_order(&mut self, order: PlaceOrder) -> Result<()> {
         match self {
             AnyExecutor::Hyperliquid(e) => e.place_order(order).await.map_err(Into::into),
+            AnyExecutor::ParadexLight(e) => e.place_order(order).await.map_err(Into::into),
         }
     }
 
     pub async fn cancel_order(&mut self, cancel: CancelOrder) -> Result<()> {
         match self {
             AnyExecutor::Hyperliquid(e) => e.cancel_order(cancel).await.map_err(Into::into),
+            AnyExecutor::ParadexLight(e) => e.cancel_order(cancel).await.map_err(Into::into),
         }
     }
 
     pub async fn replace_order(&mut self, replace: ReplaceOrder) -> Result<()> {
         match self {
             AnyExecutor::Hyperliquid(e) => e.replace_order(replace).await.map_err(Into::into),
+            AnyExecutor::ParadexLight(e) => e.replace_order(replace).await.map_err(Into::into),
         }
     }
 }

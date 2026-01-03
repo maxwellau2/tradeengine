@@ -33,9 +33,11 @@ If we have 4 cores:
 
 ## Target Benchmarks
 
-1. End-to-end latency of 20 microseconds (excluding network time)
-2. p99.9 of about 300 microseconds under relatively high load (not sure how to quantify this)
-
+1. [DONE] End-to-end latency of 20 microseconds (excluding network time)
+2. [DONE] p99.9 of about 300 microseconds under relatively high load (not sure how to quantify this)
+3. Change SerdeJson Parser for downstream events to SimdJson for speed
+4. MutliWebsocket Use for Higher Throughput in MDFeedEngine
+5. Rewrite MDFeed to support finer grain control to be library agnostic
 
 ## Learrning points
 - Learn rust lol

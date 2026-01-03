@@ -1,9 +1,0 @@
-channel_name: channel1
-passport_id: 1234
-subscriptions:
-    hyperliquid:
-        -kline: [BTC, ETH, LINK]
-        -orderbook: [BTC, ETH, LINK]
-    binance:
-        -kline: [BTCUSDT, ETHUSDT, LINKUSDT]
-        -orderbook: [BTCUSDT, ETHUSDT, LINKUSDT]

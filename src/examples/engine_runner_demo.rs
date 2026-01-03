@@ -36,7 +36,10 @@ impl DummyStrategy {
 
 impl Strategy for DummyStrategy {
     fn on_orderbook(&mut self, ob: &Orderbook, _ctx: &StrategyContext) {
-        // debug!("Orderbook Received! {:?}", ob);
+        debug!(
+            "Orderbook Received! best bid {:?}, best ask {:?}",
+            ob.bids[0], ob.asks[0]
+        );
         // let id = self.next_cloid();
         // let order = PlaceOrder::new(
         //     ob.symbol,
@@ -69,35 +72,35 @@ impl Strategy for DummyStrategy {
     fn on_kline(&mut self, kline: &Kline, _ctx: &StrategyContext) {
         // debug!("kline recv {:?}", kline);
         // log all klines, mark closed ones
-        if kline.is_closed {
-            info!(
-                "[CLOSED] Kline: {:?} {:?} close={:?}",
-                &kline.symbol, kline.interval, kline.close
-            );
-            let order = PlaceOrder {
-                symbol: kline.symbol,
-                venue: kline.venue,
-                client_order_id: client_order_id_from_u8(self.next_cloid()),
-                price: kline.low,
-                qty: 12.0 / kline.low,
-                side: Side::LONG,
-                time_in_force: TimeInForce::PO,
-                order_type: OrderType::LIMIT,
-                passport_id: self.passport_id.clone(),
-            };
-            if !_ctx.has_duplicate(&order) {
-                let res = _ctx.place_order(order);
-                match res {
-                    Ok(_) => {}
-                    Err(e) => error!("{e}"),
-                }
-            }
-        } else {
-            debug!(
-                "[OPEN] Kline: {:?} {:?} close={} T={:?}",
-                &kline.symbol, kline.interval, kline.close, kline.close_time
-            );
-        }
+        // if kline.is_closed {
+        //     info!(
+        //         "[CLOSED] Kline: {:?} {:?} close={:?}",
+        //         &kline.symbol, kline.interval, kline.close
+        //     );
+        //     let order = PlaceOrder {
+        //         symbol: kline.symbol,
+        //         venue: kline.venue,
+        //         client_order_id: client_order_id_from_u8(self.next_cloid()),
+        //         price: kline.low,
+        //         qty: 12.0 / kline.low,
+        //         side: Side::LONG,
+        //         time_in_force: TimeInForce::PO,
+        //         order_type: OrderType::LIMIT,
+        //         passport_id: self.passport_id.clone(),
+        //     };
+        //     if !_ctx.has_duplicate(&order) {
+        //         let res = _ctx.place_order(order);
+        //         match res {
+        //             Ok(_) => {}
+        //             Err(e) => error!("{e}"),
+        //         }
+        //     }
+        // } else {
+        //     debug!(
+        //         "[OPEN] Kline: {:?} {:?} close={} T={:?}",
+        //         &kline.symbol, kline.interval, kline.close, kline.close_time
+        //     );
+        // }
     }
     fn on_start(&mut self, _ctx: &StrategyContext) {}
     fn on_disconnect(&mut self, _ctx: &StrategyContext) {}

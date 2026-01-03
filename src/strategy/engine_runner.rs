@@ -10,6 +10,7 @@ use ringbuf::{HeapCons, HeapRb, traits::Split};
 use crate::core_utils::{pin_to_core, validate_cores};
 use crate::md_connectors::base::md_feed_base::MDFeed;
 use crate::md_connectors::hyperliquid::feed::HyperliquidMDFeed;
+use crate::md_connectors::paradex::feed::ParadexMDFeed;
 use crate::strategy::engine::MarketDataEngine;
 use crate::strategy::strategy::Strategy;
 use crate::tui::SharedTUIState;
@@ -93,6 +94,7 @@ const DEFAULT_RING_SIZE: usize = 1 << 10;
 fn parse_venue(s: &str) -> Option<Venue> {
     match s.to_lowercase().as_str() {
         "hyperliquid" => Some(Venue::Hyperliquid),
+        "paradex" => Some(Venue::Paradex),
         // add more venues here as needed
         _ => None,
     }
@@ -203,6 +205,9 @@ impl EngineRunner {
                 Venue::Hyperliquid => {
                     self.setup_hyperliquid_feed(&venue_name).await;
                 }
+                Venue::Paradex => {
+                    self.setup_paradex_feed(&venue_name).await;
+                }
                 // add other venues here
                 _ => {
                     tracing::warn!("venue {:?} not yet supported", venue);
@@ -250,6 +255,50 @@ impl EngineRunner {
 
         // add consumer to engine
         self.engine.add_md_consumer(Venue::Hyperliquid, cons);
+
+        // spawn feed task
+        tokio::spawn(async move {
+            feed.run_forever(5).await;
+        });
+    }
+    async fn setup_paradex_feed(&mut self, venue_name: &str) {
+        let subs = self.config.get_venue(venue_name);
+        let Some(subs) = subs else { return };
+
+        // build subscription list
+        let mut subscriptions = Vec::new();
+
+        // add orderbook subscriptions
+        for symbol in &subs.orderbook {
+            subscriptions.push(ParadexMDFeed::orderbook_subscription(symbol));
+        }
+
+        // add kline subscriptions with parsed intervals
+        // format: "SYMBOL::INTERVAL" e.g. "BTC::M5" or just "BTC" (defaults to M1)
+        for kline_sub in &subs.kline {
+            let (symbol, interval) = parse_kline_sub(kline_sub);
+            subscriptions.push(ParadexMDFeed::kline_subscription(symbol, interval));
+        }
+
+        if subscriptions.is_empty() {
+            tracing::info!("no subscriptions for hyperliquid, skipping feed");
+            return;
+        }
+
+        tracing::info!(
+            "setting up hyperliquid feed with {} subscriptions",
+            subscriptions.len()
+        );
+
+        // create ring buffer
+        let rb = HeapRb::<Packet<MDMessage>>::new(DEFAULT_RING_SIZE);
+        let (prod, cons) = rb.split();
+
+        // create feed
+        let feed = ParadexMDFeed::new(prod, false, subscriptions);
+
+        // add consumer to engine
+        self.engine.add_md_consumer(Venue::Paradex, cons);
 
         // spawn feed task
         tokio::spawn(async move {
@@ -410,6 +459,89 @@ impl EngineRunner {
                                             } else {
                                                 let _ = ready_tx.send(Err(
                                                     "failed to connect after 3 attempts".into(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Venue::Paradex => {
+                                        let mut subscriptions = Vec::new();
+
+                                        for symbol in &subs.orderbook {
+                                            subscriptions.push(
+                                                ParadexMDFeed::orderbook_subscription(symbol),
+                                            );
+                                        }
+
+                                        for kline_sub in &subs.kline {
+                                            let (symbol, interval) = parse_kline_sub(kline_sub);
+                                            subscriptions.push(ParadexMDFeed::kline_subscription(
+                                                symbol, interval,
+                                            ));
+                                        }
+
+                                        if !subscriptions.is_empty() {
+                                            tracing::info!(
+                                                "setting up paradex feed with {} subscriptions",
+                                                subscriptions.len()
+                                            );
+
+                                            let rb =
+                                                HeapRb::<Packet<MDMessage>>::new(DEFAULT_RING_SIZE);
+                                            let (prod, cons) = rb.split();
+
+                                            let _ = tx.send((Venue::Paradex, cons));
+
+                                            let feed =
+                                                ParadexMDFeed::new(prod, false, subscriptions);
+                                            let mut client = feed.into_client();
+
+                                            let mut connected = false;
+                                            for attempt in 1..=3 {
+                                                tracing::info!(
+                                                    "paradex feed connection attempt {}/3",
+                                                    attempt
+                                                );
+                                                match client.connect_once().await {
+                                                    Ok(_) => {
+                                                        tracing::info!("paradex feed connected");
+                                                        connected = true;
+                                                        break;
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!(
+                                                            "connection attempt {} failed: {}",
+                                                            attempt,
+                                                            e
+                                                        );
+                                                        tokio::time::sleep(
+                                                            std::time::Duration::from_secs(2),
+                                                        )
+                                                        .await;
+                                                    }
+                                                }
+                                            }
+
+                                            if connected {
+                                                let _ = ready_tx.send(Ok(()));
+                                                loop {
+                                                    if let Err(e) = client.run_once().await {
+                                                        tracing::warn!("feed session error: {}", e);
+                                                    }
+                                                    tracing::info!(
+                                                        "feed disconnected, reconnecting in 5s..."
+                                                    );
+                                                    tokio::time::sleep(
+                                                        std::time::Duration::from_secs(5),
+                                                    )
+                                                    .await;
+                                                    if let Err(e) = client.connect_once().await {
+                                                        tracing::warn!("reconnect failed: {}", e);
+                                                    }
+                                                }
+                                            } else {
+                                                let _ = ready_tx.send(Err(
+                                                    "paradex failed to connect after 3 attempts"
+                                                        .into(),
                                                 ));
                                             }
                                         }

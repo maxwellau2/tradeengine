@@ -16,8 +16,10 @@ pub struct HyperliquidPassport {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ParadexPassport {
-    pub user_address: String,
-    pub private_key: String,
+    pub l2_private_key: Option<String>, // starknet/paradex private key (hex) - for already onboarded
+    pub eth_private_key: Option<String>, // ethereum private key (hex) - for onboarding
+    #[serde(default)]
+    pub is_mainnet: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

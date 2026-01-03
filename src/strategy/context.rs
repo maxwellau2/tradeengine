@@ -1,5 +1,5 @@
 use crate::trade_server::state::StateManager;
-use crate::types::common::{Balance, ClientOrderId, Order, Position, Side, Symbol};
+use crate::types::common::{Balance, ClientOrderId, Order, Position, Side, Symbol, Venue};
 use crate::types::trade_server::{
     CancelOrder, EngineTSMessage, Heartbeat, PlaceOrder, ReplaceOrder, StateUpdate, TSEngineMessage,
 };
@@ -118,44 +118,44 @@ impl EngineState {
 
     // --- position queries ---
 
-    /// get position for symbol
-    pub fn get_position(&self, symbol: &Symbol) -> Option<&Position> {
-        self.state.positions.get(symbol)
+    /// get position for (symbol, venue)
+    pub fn get_position(&self, symbol: &Symbol, venue: Venue) -> Option<&Position> {
+        self.state.positions.get(symbol, venue)
     }
 
-    /// get all positions
+    /// get all positions across all venues
     pub fn get_all_positions(&self) -> Vec<Position> {
         self.state.positions.get_all()
     }
 
     /// get net position size (positive = long, negative = short)
-    pub fn net_position(&self, symbol: &Symbol) -> f64 {
-        self.state.positions.net_size(symbol)
+    pub fn net_position(&self, symbol: &Symbol, venue: Venue) -> f64 {
+        self.state.positions.net_size(symbol, venue)
     }
 
-    /// check if we have a position in symbol
-    pub fn has_position(&self, symbol: &Symbol) -> bool {
-        self.state.positions.has_position(symbol)
+    /// check if we have a position in (symbol, venue)
+    pub fn has_position(&self, symbol: &Symbol, venue: Venue) -> bool {
+        self.state.positions.has_position(symbol, venue)
     }
 
-    /// total unrealised pnl
+    /// total unrealised pnl across all venues
     pub fn total_unrealised_pnl(&self) -> f64 {
         self.state.positions.total_unrealised_pnl()
     }
 
     // --- balance queries ---
 
-    /// get balance for coin
-    pub fn get_balance(&self, coin: &Symbol) -> Option<&Balance> {
-        self.state.balances.get(coin)
+    /// get balance for (coin, venue)
+    pub fn get_balance(&self, coin: &Symbol, venue: Venue) -> Option<&Balance> {
+        self.state.balances.get(coin, venue)
     }
 
-    /// get balance qty for coin
-    pub fn balance_qty(&self, coin: &Symbol) -> f64 {
-        self.state.balances.qty(coin)
+    /// get balance qty for (coin, venue)
+    pub fn balance_qty(&self, coin: &Symbol, venue: Venue) -> f64 {
+        self.state.balances.qty(coin, venue)
     }
 
-    /// get all balances
+    /// get all balances across all venues
     pub fn get_all_balances(&self) -> Vec<Balance> {
         self.state.balances.get_all()
     }
@@ -275,44 +275,44 @@ impl StrategyContext {
 
     // --- position methods ---
 
-    /// get position for symbol
-    pub fn get_position(&self, symbol: &Symbol) -> Option<Position> {
-        self.state.borrow().get_position(symbol).cloned()
+    /// get position for (symbol, venue)
+    pub fn get_position(&self, symbol: &Symbol, venue: Venue) -> Option<Position> {
+        self.state.borrow().get_position(symbol, venue).cloned()
     }
 
-    /// get all positions
+    /// get all positions across all venues
     pub fn get_all_positions(&self) -> Vec<Position> {
         self.state.borrow().get_all_positions()
     }
 
     /// get net position size (positive = long, negative = short)
-    pub fn net_position(&self, symbol: &Symbol) -> f64 {
-        self.state.borrow().net_position(symbol)
+    pub fn net_position(&self, symbol: &Symbol, venue: Venue) -> f64 {
+        self.state.borrow().net_position(symbol, venue)
     }
 
-    /// check if we have a position in symbol
-    pub fn has_position(&self, symbol: &Symbol) -> bool {
-        self.state.borrow().has_position(symbol)
+    /// check if we have a position in (symbol, venue)
+    pub fn has_position(&self, symbol: &Symbol, venue: Venue) -> bool {
+        self.state.borrow().has_position(symbol, venue)
     }
 
-    /// total unrealised pnl
+    /// total unrealised pnl across all venues
     pub fn total_unrealised_pnl(&self) -> f64 {
         self.state.borrow().total_unrealised_pnl()
     }
 
     // --- balance methods ---
 
-    /// get balance for coin
-    pub fn get_balance(&self, coin: &Symbol) -> Option<Balance> {
-        self.state.borrow().get_balance(coin).cloned()
+    /// get balance for (coin, venue)
+    pub fn get_balance(&self, coin: &Symbol, venue: Venue) -> Option<Balance> {
+        self.state.borrow().get_balance(coin, venue).cloned()
     }
 
-    /// get balance qty for coin
-    pub fn balance_qty(&self, coin: &Symbol) -> f64 {
-        self.state.borrow().balance_qty(coin)
+    /// get balance qty for (coin, venue)
+    pub fn balance_qty(&self, coin: &Symbol, venue: Venue) -> f64 {
+        self.state.borrow().balance_qty(coin, venue)
     }
 
-    /// get all balances
+    /// get all balances across all venues
     pub fn get_all_balances(&self) -> Vec<Balance> {
         self.state.borrow().get_all_balances()
     }

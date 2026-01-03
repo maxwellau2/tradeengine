@@ -37,8 +37,13 @@ impl ExecutorRunner {
         }
     }
 
-    pub async fn start(&mut self) {
+    /// connect/warmup the executor (auth, jwt, etc)
+    pub async fn connect(&mut self) {
         self.executor.connect().await;
+    }
+
+    /// main loop - call after connect()
+    pub async fn run_loop(&mut self) {
         loop {
             // in: poll inbound queue (orders from central)
             self.ingress_once().await;
@@ -48,6 +53,12 @@ impl ExecutorRunner {
                 self.handle_response(val);
             }
         }
+    }
+
+    /// convenience method that calls connect then run_loop
+    pub async fn start(&mut self) {
+        self.connect().await;
+        self.run_loop().await;
     }
 
     fn handle_response(&mut self, val: OrderResponse) {

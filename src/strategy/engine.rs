@@ -480,6 +480,13 @@ impl MarketDataEngine {
             MDMessage::Kline(kline) => {
                 self.on_kline(&kline);
             } // Add other message types (klines, trades, etc.) here
+
+            MDMessage::AssetCtx(_asset) => {
+                // not implemented yet
+            }
+            MDMessage::FundingInfo(_funding) => {
+                // not implemented yet
+            }
         }
     }
 

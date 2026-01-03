@@ -1,6 +1,6 @@
 use std::env;
 
-use md_feed::ts_connectors::ts_runner::TSRunner;
+use md_feed::trade_server::ts_runner::TSRunner;
 use md_feed::tui::{TUILogLayer, new_shared_state};
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
@@ -15,7 +15,9 @@ fn main() {
     let config_path = &args[1];
     let use_tui = args.iter().any(|a| a == "--tui");
 
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // filter: info for our crate, warn for external crates (suppresses paradex sdk internal logs)
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,md_feed=info"));
 
     let tsrunner = if use_tui {
         // create shared state for TUI log layer

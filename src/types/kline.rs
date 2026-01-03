@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::common::{KlineInterval, Symbol, Venue, symbol_from_str};
+use crate::{
+    md_connectors::hyperliquid::messages::{HyperliquidRawKline, SimdRawKline},
+    types::common::{KlineInterval, Symbol, Venue, symbol_from_str},
+};
+use simd_json::prelude::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Kline {
@@ -75,39 +79,30 @@ impl Kline {
         }
     }
     /// update kline from hyperliquid json
-    pub fn update_from_hyperliquid(&mut self, kline: &serde_json::Value) {
-        self.open_time = kline.get("t").and_then(|v| v.as_u64()).unwrap_or(0);
-        self.close_time = kline.get("T").and_then(|v| v.as_u64()).unwrap_or(0);
-        self.open = kline
-            .get("o")
-            .and_then(|v| v.as_str())
-            .and_then(|s| lexical::parse::<f64, _>(s).ok())
-            .unwrap_or(0.0);
-        self.low = kline
-            .get("l")
-            .and_then(|v| v.as_str())
-            .and_then(|s| lexical::parse::<f64, _>(s).ok())
-            .unwrap_or(0.0);
-        self.high = kline
-            .get("h")
-            .and_then(|v| v.as_str())
-            .and_then(|s| lexical::parse::<f64, _>(s).ok())
-            .unwrap_or(0.0);
-        self.close = kline
-            .get("c")
-            .and_then(|v| v.as_str())
-            .and_then(|s| lexical::parse::<f64, _>(s).ok())
-            .unwrap_or(0.0);
-        self.volume = kline
-            .get("v")
-            .and_then(|v| v.as_str())
-            .and_then(|s| lexical::parse::<f64, _>(s).ok())
-            .unwrap_or(0.0);
-        self.symbol = symbol_from_str(kline.get("s").and_then(|v| v.as_str()).unwrap_or(""));
-        let interval = kline.get("i").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
-        self.interval = Kline::timeframe_from_hyperliquid(interval);
+    pub fn update_from_hyperliquid<'a>(
+        &mut self,
+        data: &simd_json::BorrowedValue<'a>,
+    ) -> Result<(), &'static str> {
+        self.open_time = data.get("t").and_then(|v| v.as_u64()).ok_or("missing t")?;
+        self.close_time = data.get("T").and_then(|v| v.as_u64()).ok_or("missing T")?;
 
-        // is_closed will be set by the handler when it detects a new candle
+        let o = data.get("o").and_then(|v| v.as_str()).ok_or("missing o")?;
+        let h = data.get("h").and_then(|v| v.as_str()).ok_or("missing h")?;
+        let l = data.get("l").and_then(|v| v.as_str()).ok_or("missing l")?;
+        let c = data.get("c").and_then(|v| v.as_str()).ok_or("missing c")?;
+        let v = data.get("v").and_then(|v| v.as_str()).ok_or("missing v")?;
+        let s = data.get("s").and_then(|v| v.as_str()).ok_or("missing s")?;
+        let i = data.get("i").and_then(|v| v.as_str()).ok_or("missing i")?;
+
+        self.open = fast_float::parse(o).unwrap_or(0.0);
+        self.high = fast_float::parse(h).unwrap_or(0.0);
+        self.low = fast_float::parse(l).unwrap_or(0.0);
+        self.close = fast_float::parse(c).unwrap_or(0.0);
+        self.volume = fast_float::parse(v).unwrap_or(0.0);
+        self.symbol = symbol_from_str(s);
+        self.interval = Kline::timeframe_from_hyperliquid(i);
         self.is_closed = false;
+
+        Ok(())
     }
 }

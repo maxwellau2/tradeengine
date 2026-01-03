@@ -141,6 +141,7 @@ impl TUI {
                     Row::new(vec![
                         Cell::from(o.client_order_id.to_string()),
                         Cell::from(o.symbol.to_string()),
+                        Cell::from(format!("{:?}", o.venue)),
                         Cell::from(format!("{:?}", o.side)),
                         Cell::from(format!("{:.4}", o.price)),
                         Cell::from(format!("{:.4}", o.qty)),
@@ -152,16 +153,20 @@ impl TUI {
             let orders_table = Table::new(
                 order_rows,
                 [
-                    Constraint::Length(20),
-                    Constraint::Length(8),
+                    Constraint::Length(10),
+                    Constraint::Length(6),
+                    Constraint::Length(11),
                     Constraint::Length(5),
-                    Constraint::Length(10),
-                    Constraint::Length(10),
+                    Constraint::Length(11),
+                    Constraint::Length(8),
                     Constraint::Length(12),
                 ],
             )
             .header(
-                Row::new(vec!["ClOID", "Symbol", "Side", "Price", "Qty", "State"]).style(
+                Row::new(vec![
+                    "ClOID", "Symbol", "Venue", "Side", "Price", "Qty", "State",
+                ])
+                .style(
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
@@ -190,6 +195,7 @@ impl TUI {
                     };
                     Row::new(vec![
                         Cell::from(p.symbol.to_string()),
+                        Cell::from(format!("{:?}", p.venue)),
                         Cell::from(format!("{:?}", p.side)),
                         Cell::from(format!("{:.4}", p.qty)),
                         Cell::from(format!("{:+.2}", p.unrealised_pnl))
@@ -201,14 +207,15 @@ impl TUI {
             let positions_table = Table::new(
                 position_rows,
                 [
-                    Constraint::Length(10),
+                    Constraint::Length(8),
+                    Constraint::Length(11),
                     Constraint::Length(6),
                     Constraint::Length(12),
                     Constraint::Length(12),
                 ],
             )
             .header(
-                Row::new(vec!["Symbol", "Side", "Qty", "PnL"]).style(
+                Row::new(vec!["Symbol", "Venue", "Side", "Qty", "PnL"]).style(
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
@@ -232,6 +239,7 @@ impl TUI {
                 .map(|b| {
                     Row::new(vec![
                         Cell::from(b.coin.to_string()),
+                        Cell::from(format!("{:?}", b.venue)),
                         Cell::from(format!("{:.4}", b.qty)),
                     ])
                 })
@@ -239,10 +247,14 @@ impl TUI {
 
             let balances_table = Table::new(
                 balance_rows,
-                [Constraint::Length(10), Constraint::Length(15)],
+                [
+                    Constraint::Length(8),
+                    Constraint::Length(11),
+                    Constraint::Length(15),
+                ],
             )
             .header(
-                Row::new(vec!["Coin", "Balance"]).style(
+                Row::new(vec!["Coin", "Venue", "Balance"]).style(
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),

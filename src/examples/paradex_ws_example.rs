@@ -56,7 +56,7 @@ impl message_handler::MessageHandler for ParadexHandler {
         "jsonrpc": "2.0",
         "method": "subscribe",
         "params": {
-            "channel": "order_book.ETH-USD-PERP.snapshot@15@100ms"
+            "channel": "order_book.ONDO-USD-PERP.snapshot@15@50ms"
         },
         "id": 1
         }
@@ -80,3 +80,5 @@ async fn main() -> websocket_error::WsResult<()> {
 
     Ok(())
 }
+
+//{"jsonrpc":"2.0","method":"subscription","params":{"channel":"order_book.ONDO-USD-PERP.snapshot@15@50ms","data":{"seq_no":690385857,"market":"ONDO-USD-PERP","last_updated_at":1767381936453,"update_type":"s","inserts":[{"side":"BUY","price":"0.4159","size":"4120.8"},{"side":"BUY","price":"0.4158","size":"1619.8"},{"side":"BUY","price":"0.4157","size":"9017.4"},{"side":"BUY","price":"0.4137","size":"5005"},{"side":"BUY","price":"0.4134","size":"1002.2"},{"side":"BUY","price":"0.4133","size":"5477.5"},{"side":"BUY","price":"0.4117","size":"8434.9"},{"side":"BUY","price":"0.4116","size":"6745.5"},{"side":"BUY","price":"0.4112","size":"5471.3"},{"side":"BUY","price":"0.4063","size":"5026.5"},{"side":"BUY","price":"0.4062","size":"33618"},{"side":"BUY","price":"0.3945","size":"825.5"},{"side":"BUY","price":"0.3912","size":"1743.5"},{"side":"BUY","price":"0.3825","size":"35814.9"},{"side":"BUY","price":"0.3783","size":"367.8"},{"side":"SELL","price":"0.4164","size":"2401.9"},{"side":"SELL","price":"0.4166","size":"1772.6"},{"side":"SELL","price":"0.4167","size":"1727.5"},{"side":"SELL","price":"0.4168","size":"8832.2"},{"side":"SELL","price":"0.4191","size":"904.5"},{"side":"SELL","price":"0.4192","size":"5291.5"},{"side":"SELL","price":"0.4195","size":"5168.3"},{"side":"SELL","price":"0.4214","size":"8761.1"},{"side":"SELL","price":"0.4215","size":"5422.3"},{"side":"SELL","price":"0.4217","size":"6793.7"},{"side":"SELL","price":"0.426","size":"5041.9"},{"side":"SELL","price":"0.4261","size":"31371.8"},{"side":"SELL","price":"0.4333","size":"8288"},{"side":"SELL","price":"0.4381","size":"1487.3"},{"side":"SELL","price":"0.4413","size":"1567"}],"updates":[],"deletes":[]}}}

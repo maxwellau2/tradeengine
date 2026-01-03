@@ -9,6 +9,9 @@ pub enum WsError {
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("simd json error: {0}")]
+    SimdJson(#[from] simd_json::Error),
+
     #[error("not connected")]
     NotConnected,
 

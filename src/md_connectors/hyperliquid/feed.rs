@@ -1,20 +1,24 @@
 use crate::md_connectors::base::md_feed_base::MDFeed;
+use crate::md_connectors::hyperliquid::messages::*;
 // Hyperliquid WebSocket feed handler with buffer reuse and proper error handling
 use crate::md_connectors::hyperliquid::constants;
 use crate::md_connectors::networking_base::websocket::websocket::WebSocketClient;
 use crate::md_connectors::networking_base::websocket::{message_handler, websocket_error};
+use crate::types::clock::timestamp_nanos;
 use crate::types::common::{KlineInterval, Symbol, Venue, symbol_from_str};
 use crate::types::kline::Kline;
 use crate::types::{
     orderbook::Orderbook,
     packet::{MDMessage, Packet},
 };
+use arrayvec::ArrayVec;
 use async_trait::async_trait;
 use ringbuf::{self, traits::Producer};
 use serde_json::Value;
+use simd_json::prelude::{ValueAsScalar, ValueObjectAccess};
 use std::collections::HashMap;
+use tracing::trace;
 use tracing::{debug, warn};
-
 /// key for tracking klines: (symbol, interval)
 type KlineKey = (Symbol, KlineInterval);
 
@@ -37,13 +41,7 @@ impl HyperliquidHandler {
     ) -> Self {
         Self {
             ringbuf_producer,
-            orderbook_buffer: Orderbook::new(
-                symbol_from_str(""),
-                Venue::Hyperliquid,
-                Vec::new(),
-                Vec::new(),
-                0,
-            ),
+            orderbook_buffer: Orderbook::empty(Venue::Hyperliquid),
             kline_tracker: HashMap::new(),
             kline_buffer: Kline::default_with_venue(Venue::Hyperliquid),
             seq_num: 0,
@@ -76,78 +74,76 @@ impl message_handler::MessageHandler for HyperliquidHandler {
             }
         }
     }
+
     async fn on_message(&mut self, text: String) -> websocket_error::WsResult<()> {
-        let msg: Value = serde_json::from_str(&text).map_err(websocket_error::WsError::Json)?;
+        let start = timestamp_nanos();
 
-        // Extract channel and data
-        let channel = msg.get("channel").and_then(|v| v.as_str());
-        let data = msg.get("data");
+        // simd-json requires mutable bytes
+        let mut bytes = text.into_bytes();
+
+        // quick check: market data starts with {"channel": control messages start with {"method":
+        if bytes.len() < 12 || &bytes[0..11] != b"{\"channel\":" {
+            debug!("control message (skipped parse)");
+            return Ok(());
+        }
+
+        // zero-allocation parse using BorrowedValue - borrows strings directly from input
+        let val: simd_json::BorrowedValue =
+            simd_json::to_borrowed_value(&mut bytes).map_err(|e| {
+                websocket_error::WsError::Json(serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                )))
+            })?;
+
+        // get channel type
+        let channel = val.get("channel").and_then(|v| v.as_str()).unwrap_or("");
+
         match channel {
-            Some("l2Book") => {
-                match data {
-                    Some(value) => {
-                        // Update buffer in-place (reuses Vec allocations)
-                        self.orderbook_buffer.update_from_hyperliquid(value);
-
-                        // Increment sequence number
-                        self.seq_num = self.seq_num.wrapping_add(1);
-
-                        // Clone the buffer (data is copied, but source keeps capacity)
-                        let packet = Packet::new(
-                            MDMessage::Orderbook(self.orderbook_buffer.clone()),
-                            self.seq_num,
-                        );
-
-                        // Try to push to ringbuffer with back pressure handling
-                        self.publish(packet);
+            "l2Book" => {
+                if let Some(data) = val.get("data") {
+                    if let Err(e) = self.orderbook_buffer.update_from_hyperliquid(data) {
+                        warn!("orderbook parse error: {}", e);
+                        return Ok(());
                     }
-                    None => {
-                        warn!("Received l2Book message with no data field");
-                    }
+                    trace!("zero-alloc parse latency: {}ns", timestamp_nanos() - start);
+                    self.seq_num = self.seq_num.wrapping_add(1);
+
+                    let packet = Packet::new(
+                        MDMessage::Orderbook(self.orderbook_buffer.clone()),
+                        self.seq_num,
+                    );
+                    self.publish(packet);
                 }
             }
-            Some("trade") => {
-                debug!("Received trade message (not implemented)");
-            }
-            Some("candle") => {
-                match data {
-                    Some(value) => {
-                        // parse into temp buffer
-                        self.kline_buffer.update_from_hyperliquid(value);
-                        let key = (self.kline_buffer.symbol, self.kline_buffer.interval);
-
-                        // check tracker and emit closed kline if new candle started
-                        if let Some(mut prev_kline) = self.kline_tracker.remove(&key) {
-                            if prev_kline.open_time != self.kline_buffer.open_time {
-                                // new candle - emit previous as closed
-                                prev_kline.is_closed = true;
-                                self.seq_num = self.seq_num.wrapping_add(1);
-                                self.publish(Packet::new(
-                                    MDMessage::Kline(prev_kline),
-                                    self.seq_num,
-                                ));
-                            }
-                            // else same candle, prev_kline is dropped
+            "candle" => {
+                if let Some(data) = val.get("data") {
+                    if let Err(e) = self.kline_buffer.update_from_hyperliquid(data) {
+                        warn!("kline parse error: {}", e);
+                        return Ok(());
+                    }
+                    trace!("zero-alloc parse latency: {}ns", timestamp_nanos() - start);
+                    let key = (self.kline_buffer.symbol, self.kline_buffer.interval);
+                    if let Some(mut prev_kline) = self.kline_tracker.remove(&key) {
+                        if prev_kline.open_time != self.kline_buffer.open_time {
+                            prev_kline.is_closed = true;
+                            self.seq_num = self.seq_num.wrapping_add(1);
+                            self.publish(Packet::new(MDMessage::Kline(prev_kline), self.seq_num));
                         }
-
-                        // store in tracker and emit current kline (open)
-                        self.seq_num = self.seq_num.wrapping_add(1);
-                        self.kline_tracker.insert(key, self.kline_buffer.clone());
-                        self.publish(Packet::new(
-                            MDMessage::Kline(self.kline_buffer.clone()),
-                            self.seq_num,
-                        ));
                     }
-                    None => {
-                        warn!("Received candle message with no data field");
-                    }
+                    self.seq_num = self.seq_num.wrapping_add(1);
+                    self.kline_tracker.insert(key, self.kline_buffer.clone());
+                    self.publish(Packet::new(
+                        MDMessage::Kline(self.kline_buffer.clone()),
+                        self.seq_num,
+                    ));
                 }
             }
-            Some(other) => {
-                debug!("Ignoring channel: {}", other);
+            "subscriptionResponse" => {
+                debug!("subscription confirmed");
             }
-            None => {
-                warn!("Received message with no channel field");
+            _ => {
+                warn!("unhandled channel: {}", channel);
             }
         }
 

@@ -108,6 +108,12 @@ pub async fn main() -> WsResult<()> {
                 MDMessage::Kline(kline) => {
                     println!("Kline in Consumer: {:?}", kline);
                 }
+                MDMessage::AssetCtx(_) => {
+                    println!("AssetCtx not impl yet")
+                }
+                MDMessage::FundingInfo(funding) => {
+                    println!("FundingInfo: {:?}", funding);
+                }
             }
         }
     }

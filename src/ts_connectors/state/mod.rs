@@ -1,10 +1,12 @@
 pub mod error;
 pub mod hyperliquid;
+pub mod paradex_light;
 
 use async_trait::async_trait;
 
-use crate::ts_connectors::state::error::{StateError, StateResult};
+use crate::ts_connectors::state::error::StateResult;
 use crate::ts_connectors::state::hyperliquid::HyperliquidStateSubscriber;
+use crate::ts_connectors::state::paradex_light::ParadexLightStateSubscriber;
 use crate::types::common::PassportId;
 use crate::types::trade_server::StateUpdate;
 use std::error::Error;
@@ -33,18 +35,21 @@ pub trait StateSubscriber: Send {
 
 pub enum AnyStateSubscriber {
     Hyperliquid(HyperliquidStateSubscriber),
+    ParadexLight(ParadexLightStateSubscriber),
 }
 
 impl AnyStateSubscriber {
     pub async fn connect(&mut self) {
         match self {
             AnyStateSubscriber::Hyperliquid(s) => s.connect().await,
+            AnyStateSubscriber::ParadexLight(s) => s.connect().await,
         }
     }
 
     pub async fn produce(&mut self) -> Option<StateUpdate> {
         match self {
             AnyStateSubscriber::Hyperliquid(s) => s.produce().await,
+            AnyStateSubscriber::ParadexLight(s) => s.produce().await,
         }
     }
 }

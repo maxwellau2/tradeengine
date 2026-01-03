@@ -38,37 +38,36 @@ impl DummyStrategy {
 impl Strategy for DummyStrategy {
     fn on_orderbook(&mut self, ob: &Orderbook, _ctx: &StrategyContext) {
         debug!("Orderbook Received! {:?}", ob);
-        let id = self.next_cloid();
-        let order = PlaceOrder::new(
-            ob.symbol,
-            ob.venue,
-            client_order_id_from_u8(id),
-            ob.bids[3].price,
-            11.0 / ob.bids[3].price,
-            Side::LONG,
-            TimeInForce::PO,
-            OrderType::LIMIT,
-            self.passport_id,
-        );
+        // let id = self.next_cloid();
+        // let order = PlaceOrder::new(
+        //     ob.symbol,
+        //     ob.venue,
+        //     client_order_id_from_u8(id),
+        //     ob.bids[3].price,
+        //     11.0 / ob.bids[3].price,
+        //     Side::LONG,
+        //     TimeInForce::PO,
+        //     OrderType::LIMIT,
+        //     self.passport_id,
+        // );
 
-        // check if duplicate exists before placing
-        if _ctx.has_duplicate(&order) {
-            debug!("skipping duplicate order");
-            return;
-        }
-        let res = _ctx.place_order(order);
-        match res {
-            Ok(val) => {
-                info!("Placed order {:?}", val);
-            }
-            Err(e) => {
-                warn!("Error {:?}", e);
-            }
-        }
+        // // check if duplicate exists before placing
+        // if _ctx.has_duplicate(&order) {
+        //     debug!("skipping duplicate order");
+        //     return;
+        // }
+        // let res = _ctx.place_order(order);
+        // match res {
+        //     Ok(val) => {
+        //         info!("Placed order {:?}", val);
+        //     }
+        //     Err(e) => {
+        //         warn!("Error {:?}", e);
+        //     }
         // }
     }
     fn on_kline(&mut self, _kline: &Kline, _ctx: &StrategyContext) {
-        info!("Kline Received! {:?}", _kline);
+        // info!("Kline Received! {:?}", _kline);
     }
     fn on_start(&mut self, _ctx: &StrategyContext) {}
     fn on_disconnect(&mut self, _ctx: &StrategyContext) {}
@@ -111,9 +110,9 @@ async fn test_engine_creation() {
     let rb = HeapRb::<Packet<MDMessage>>::new(RING_CAPACITY);
     let (prod, cons) = rb.split();
     let subscriptions = vec![
-        HyperliquidMDFeed::orderbook_subscription("ETH"),
-        HyperliquidMDFeed::orderbook_subscription("BTC"),
-        HyperliquidMDFeed::kline_subscription("XLM", md_feed::types::common::KlineInterval::M1),
+        HyperliquidMDFeed::orderbook_subscription("PURR"),
+        // HyperliquidMDFeed::orderbook_subscription("BTC"),
+        // HyperliquidMDFeed::kline_subscription("XLM", md_feed::types::common::KlineInterval::M1),
     ];
     let feed = HyperliquidMDFeed::new(prod, false, subscriptions);
     tokio::spawn(async move { feed.run_forever(5).await });

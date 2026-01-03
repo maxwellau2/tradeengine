@@ -5,6 +5,8 @@ use crate::{
     types::trade_server::{EngineTSMessage, TSEngineMessage},
 };
 
+const SHM_IPC_Q_SIZE: usize = 1 << 10;
+
 /// This struct wraps the iceoryx2 publisher and implements the `OrderGatewaySend` trait.
 /// It's given to the strategy context so strategies can send orders to the trade server.
 pub struct EngineTSSender {
@@ -76,6 +78,7 @@ impl EngineIceoryx2Wrapper {
         let service_send = node
             .service_builder(&service_name_send)
             .publish_subscribe::<EngineTSMessage>()
+            .subscriber_max_buffer_size(SHM_IPC_Q_SIZE)
             .open_or_create()
             .map_err(|e| format!("Failed to open/create send service: {:?}", e))?;
 
@@ -87,7 +90,7 @@ impl EngineIceoryx2Wrapper {
             .service_builder(&service_name_recv)
             .publish_subscribe::<TSEngineMessage>()
             // increase buffer to avoid dropping messages during query responses
-            .subscriber_max_buffer_size(1024)
+            .subscriber_max_buffer_size(SHM_IPC_Q_SIZE)
             .open_or_create()
             .map_err(|e| format!("Failed to open/create recv service: {:?}", e))?;
 
@@ -157,7 +160,7 @@ impl TSIceoryx2Wrapper {
             .service_builder(&service_name_send)
             .publish_subscribe::<TSEngineMessage>()
             // increase buffer to avoid dropping messages during query responses
-            .subscriber_max_buffer_size(1024)
+            .subscriber_max_buffer_size(SHM_IPC_Q_SIZE)
             .open_or_create()
             .map_err(|e| format!("Failed to open/create send service: {:?}", e))?;
 
@@ -168,6 +171,7 @@ impl TSIceoryx2Wrapper {
         let service_recv = node
             .service_builder(&service_name_recv)
             .publish_subscribe::<EngineTSMessage>()
+            .subscriber_max_buffer_size(SHM_IPC_Q_SIZE)
             .open_or_create()
             .map_err(|e| format!("Failed to open/create recv service: {:?}", e))?;
 

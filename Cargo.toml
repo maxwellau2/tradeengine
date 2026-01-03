@@ -90,3 +90,7 @@ path = "src/examples/ts_runner_demo.rs"
 [[bin]]
 name = "ts_cli"
 path = "src/examples/ts_cli.rs"
+
+[[bin]]
+name = "test_subscribers"
+path = "src/examples/test_subscribers.rs"

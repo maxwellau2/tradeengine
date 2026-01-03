@@ -290,7 +290,7 @@ impl MarketDataEngine {
     }
 
     /// sync engine state to TUI state for display
-    fn sync_tui_state(&self) {
+    pub fn sync_tui_state(&self) {
         if let Some(tui_state) = &self.tui_state {
             let state = self.state.borrow();
             let current = tui_state.load();
@@ -490,6 +490,122 @@ impl MarketDataEngine {
         }
     }
 
+    // =========================================================================
+    // callback-based methods for TradingRuntime (no ring buffers)
+    // =========================================================================
+
+    /// handle market data directly (callback-based, no ring buffer)
+    ///
+    /// called by TradingRuntime when any md feed has data.
+    /// only dispatches to strategy if recon is complete.
+    pub fn on_md(&mut self, _venue: Venue, msg: MDMessage) {
+        // skip md processing during recon
+        if self.recon_state != ReconState::Success {
+            return;
+        }
+
+        match msg {
+            MDMessage::Orderbook(orderbook) => {
+                self.on_orderbook(&orderbook);
+            }
+            MDMessage::Kline(kline) => {
+                self.on_kline(&kline);
+            }
+            MDMessage::AssetCtx(_) => {}
+            MDMessage::FundingInfo(_) => {}
+        }
+    }
+
+    /// poll trade server for messages (non-blocking)
+    ///
+    /// called by TradingRuntime between md updates.
+    pub fn poll_ts(&mut self) {
+        while let Some(ts_message) = self.ts_receiver.recv() {
+            self.handle_ts_message(ts_message);
+        }
+
+        // check recon timeout if in progress
+        if self.recon_state == ReconState::InProgress {
+            let elapsed = timestamp_micros().saturating_sub(self.recon_started_at);
+            if elapsed > RECON_TIMEOUT_US {
+                warn!("recon timeout after {}ms", elapsed / 1000);
+                self.recon_retries += 1;
+
+                if self.recon_retries >= MAX_RECON_RETRIES {
+                    warn!("max recon retries ({}) exceeded", MAX_RECON_RETRIES);
+                    self.recon_failure();
+                } else {
+                    warn!(
+                        "retrying recon ({}/{})",
+                        self.recon_retries + 1,
+                        MAX_RECON_RETRIES
+                    );
+                    self.start_recon();
+                }
+            }
+        }
+    }
+
+    /// poll heartbeat logic (non-blocking)
+    ///
+    /// checks ts liveness and sends periodic heartbeats.
+    pub fn poll_heartbeat(&mut self) {
+        // skip if recon not done
+        if self.recon_state != ReconState::Success {
+            return;
+        }
+
+        let timenow = timestamp_micros();
+        let timeout = self.heartbeat_cycle * 2;
+
+        // check ts liveness
+        if timenow.saturating_sub(self.last_heartbeat_recv) > timeout {
+            self.heartbeat_failures += 1;
+            warn!(
+                "no response from TS in {} us (failure #{})",
+                timeout, self.heartbeat_failures
+            );
+
+            if self.heartbeat_failures >= 3 {
+                warn!("too many heartbeat failures, triggering recon");
+                self.strategy.on_disconnect(&self.context);
+                self.start_recon();
+            }
+            return;
+        }
+
+        // reset failure counter
+        self.heartbeat_failures = 0;
+
+        // send heartbeat periodically
+        if timenow.saturating_sub(self.last_heartbeat_sent) > self.heartbeat_cycle {
+            self.send_heartbeat();
+        }
+    }
+
+    /// start recon (public for TradingRuntime)
+    pub fn start_recon(&mut self) {
+        info!(
+            "starting reconciliation (attempt {}/{})",
+            self.recon_retries + 1,
+            MAX_RECON_RETRIES
+        );
+        self.recon_state = ReconState::InProgress;
+        self.recon_tracker.reset();
+        self.recon_started_at = timestamp_micros();
+
+        // clear existing state before recon
+        self.state.borrow_mut().clear();
+
+        // notify strategy
+        self.strategy.on_recon(&self.context);
+
+        // send all queries
+        self.send_qry_orders();
+        self.send_qry_positions();
+        self.send_qry_balances();
+    }
+
     fn handle_ts_message(&mut self, ts_message: TSEngineMessage) {
         // any message from TS means it's alive - update heartbeat tracker
         self.last_heartbeat_recv = timestamp_micros();
@@ -533,33 +649,6 @@ impl MarketDataEngine {
     pub fn stop(&mut self) {
         info!("Stopping MarketDataEngine");
         self.running = false;
-    }
-
-    /// Start reconciliation process
-    ///
-    /// sends queries for orders, positions, and balances to trade server.
-    /// responses arrive asynchronously via handle_ts_message and are tracked
-    /// by ReconTracker. when all complete, recon_success/failure is called.
-    pub fn start_recon(&mut self) {
-        info!(
-            "starting reconciliation (attempt {}/{})",
-            self.recon_retries + 1,
-            MAX_RECON_RETRIES
-        );
-        self.recon_state = ReconState::InProgress;
-        self.recon_tracker.reset();
-        self.recon_started_at = timestamp_micros();
-
-        // clear existing state before recon
-        self.state.borrow_mut().clear();
-
-        // notify strategy
-        self.strategy.on_recon(&self.context);
-
-        // send all queries - responses handled in run_once loop
-        self.send_qry_orders();
-        self.send_qry_positions();
-        self.send_qry_balances();
     }
 
     /// Mark reconciliation as done

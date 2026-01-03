@@ -4,6 +4,9 @@
 //! no separate worker thread - poll() called in produce().
 
 pub mod error;
+pub mod market_info;
+
+pub use market_info::{MarketInfoCache, ParadexMarket};
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -117,9 +120,16 @@ pub struct ParadexLightExecutor {
     next_req_id: AtomicU64,
     // jwt obtained timestamp (unix secs)
     jwt_obtained_at: u64,
+    // market info cache for precision/rounding
+    market_info: MarketInfoCache,
 }
 
 impl ParadexLightExecutor {
+    /// get market info for a symbol, returns None if not found
+    pub fn get_market(&self, symbol: &str) -> Option<&ParadexMarket> {
+        self.market_info.get(symbol)
+    }
+
     /// get current unix timestamp in seconds
     fn now_secs() -> u64 {
         std::time::SystemTime::now()
@@ -284,18 +294,19 @@ impl ParadexLightExecutor {
         self.next_req_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// parse place response
+    /// parse place response, returns (response, optional exchange_order_id for mapping)
     fn parse_place_response(
         request_id: u64,
         result: ResponseResult,
         order: PlaceOrder,
-    ) -> OrderResponse {
-        let status = match result {
+    ) -> (OrderResponse, Option<String>) {
+        let (status, oid_str) = match result {
             ResponseResult::Success(resp) => {
                 if resp.is_success() {
                     match resp.json::<OrderResp>() {
                         Ok(order_resp) => {
                             let oid = order_resp.id.parse::<u64>().unwrap_or(0);
+                            let oid_string = order_resp.id.clone();
                             let remaining: f64 = order_resp.remaining_size.parse().unwrap_or(0.0);
                             if remaining == 0.0 {
                                 let avg_px = order_resp
@@ -303,35 +314,49 @@ impl ParadexLightExecutor {
                                     .and_then(|s| s.parse().ok())
                                     .unwrap_or(0.0);
                                 let total_sz: f64 = order_resp.size.parse().unwrap_or(0.0);
-                                PlaceOrderStatus::Filled {
-                                    oid,
-                                    avg_px,
-                                    total_sz,
-                                }
+                                (
+                                    PlaceOrderStatus::Filled {
+                                        oid,
+                                        avg_px,
+                                        total_sz,
+                                    },
+                                    Some(oid_string),
+                                )
                             } else {
-                                PlaceOrderStatus::Resting { oid }
+                                (PlaceOrderStatus::Resting { oid }, Some(oid_string))
                             }
                         }
-                        Err(e) => PlaceOrderStatus::Rejected(format!("parse error: {}", e)),
+                        Err(e) => (
+                            PlaceOrderStatus::Rejected(format!("parse error: {}", e)),
+                            None,
+                        ),
                     }
                 } else {
                     let body = resp.text().unwrap_or_default();
-                    PlaceOrderStatus::Rejected(format!("http {}: {}", resp.status, body))
+                    (
+                        PlaceOrderStatus::Rejected(format!("http {}: {}", resp.status, body)),
+                        None,
+                    )
                 }
             }
-            ResponseResult::Timeout { duration, .. } => {
-                PlaceOrderStatus::Rejected(format!("timeout: {:?}", duration))
-            }
-            ResponseResult::Error { error, .. } => {
-                PlaceOrderStatus::Rejected(format!("error: {}", error))
-            }
+            ResponseResult::Timeout { duration, .. } => (
+                PlaceOrderStatus::Rejected(format!("timeout: {:?}", duration)),
+                None,
+            ),
+            ResponseResult::Error { error, .. } => (
+                PlaceOrderStatus::Rejected(format!("error: {}", error)),
+                None,
+            ),
         };
 
-        OrderResponse::Place(PlaceOrderResp {
-            request_id: request_id as u8,
-            request: order,
-            status,
-        })
+        (
+            OrderResponse::Place(PlaceOrderResp {
+                request_id: request_id as u8,
+                request: order,
+                status,
+            }),
+            oid_str,
+        )
     }
 
     fn parse_cancel_response(
@@ -484,6 +509,12 @@ impl Executor for ParadexLightExecutor {
             .max_idle_per_host(4)
             .build();
 
+        // fetch market info for precision/rounding
+        let market_info = MarketInfoCache::fetch(is_mainnet)
+            .await
+            .map_err(|e| ParadexLightError::Config(format!("fetch markets: {}", e)))?;
+        info!("loaded {} markets", market_info.len());
+
         info!("paradex light executor ready");
 
         Ok(Self {
@@ -496,6 +527,7 @@ impl Executor for ParadexLightExecutor {
             account,
             next_req_id: AtomicU64::new(1),
             jwt_obtained_at: Self::now_secs(),
+            market_info,
         })
     }
 
@@ -507,12 +539,31 @@ impl Executor for ParadexLightExecutor {
         let market = Self::format_market(order.symbol.as_str());
         let side = Self::to_sign_side(order.side);
         let order_type = Self::to_sign_order_type(order.order_type);
-        let size = rust_decimal::Decimal::from_f64_retain(order.qty)
-            .unwrap_or_default()
-            .round_dp(8);
-        let price = rust_decimal::Decimal::from_f64_retain(order.price)
-            .unwrap_or_default()
-            .round_dp(8);
+
+        // round price/size using market info
+        // use format_price/format_size to avoid f64 precision issues - these format
+        // to strings with exact decimal places, then parse to Decimal
+        let (price, size) = if let Some(mkt) = self.market_info.get(&market) {
+            let p_str = mkt.format_price(order.price);
+            let s_str = mkt.format_size(order.qty);
+            (
+                rust_decimal::Decimal::from_str(&p_str).unwrap_or_default(),
+                rust_decimal::Decimal::from_str(&s_str).unwrap_or_default(),
+            )
+        } else {
+            debug!(
+                "market {} not found in cache, using default precision",
+                market
+            );
+            (
+                rust_decimal::Decimal::from_f64_retain(order.price)
+                    .unwrap_or_default()
+                    .round_dp(8),
+                rust_decimal::Decimal::from_f64_retain(order.qty)
+                    .unwrap_or_default()
+                    .round_dp(8),
+            )
+        };
 
         // sign the order
         let (sig, timestamp) = sign_order(
@@ -575,7 +626,8 @@ impl Executor for ParadexLightExecutor {
             return Err(ParadexLightError::MissingCloid);
         }
 
-        let path = format!("/v1/orders/{}", client_id);
+        // use cancel by client_id endpoint
+        let path = format!("/v1/orders/by_client_id/{}", client_id);
 
         let client = self.pool.get_connection_tls(&self.api_host, 443)?;
 
@@ -591,23 +643,49 @@ impl Executor for ParadexLightExecutor {
     }
 
     async fn replace_order(&mut self, replace: ReplaceOrder) -> ParadexLightResult<()> {
+        // replace implemented as cancel + place (no state dependency on oid mapping)
         let client_id = replace.client_order_id.as_str();
         if client_id.is_empty() {
             return Err(ParadexLightError::MissingCloid);
         }
 
+        // 1. cancel existing order by cloid
+        let cancel_path = format!("/v1/orders/by_client_id/{}", client_id);
+        let client = self.pool.get_connection_tls(&self.api_host, 443)?;
+        let _cancel_req_id = client
+            .delete(&cancel_path)
+            .header("Authorization", &self.auth_header)
+            .send()?;
+        // note: we don't track cancel response, fire and forget
+
+        // 2. place new order with same cloid
         let market = Self::format_market(replace.symbol.as_str());
         let side = Self::to_sign_side(replace.side);
         let order_type = Self::to_sign_order_type(replace.order_type);
-        let size = rust_decimal::Decimal::from_f64_retain(replace.new_qty)
-            .unwrap_or_default()
-            .round_dp(8);
-        let price = rust_decimal::Decimal::from_f64_retain(replace.new_price)
-            .unwrap_or_default()
-            .round_dp(8);
 
-        let (sig, timestamp) = sign_modify_order(
-            client_id,
+        let (price, size) = if let Some(mkt) = self.market_info.get(&market) {
+            let p_str = mkt.format_price(replace.new_price);
+            let s_str = mkt.format_size(replace.new_qty);
+            (
+                rust_decimal::Decimal::from_str(&p_str).unwrap_or_default(),
+                rust_decimal::Decimal::from_str(&s_str).unwrap_or_default(),
+            )
+        } else {
+            debug!(
+                "market {} not found in cache, using default precision",
+                market
+            );
+            (
+                rust_decimal::Decimal::from_f64_retain(replace.new_price)
+                    .unwrap_or_default()
+                    .round_dp(8),
+                rust_decimal::Decimal::from_f64_retain(replace.new_qty)
+                    .unwrap_or_default()
+                    .round_dp(8),
+            )
+        };
+
+        let (sig, timestamp) = sign_order(
             &market,
             side,
             order_type,
@@ -618,8 +696,8 @@ impl Executor for ParadexLightExecutor {
             self.account,
         )?;
 
-        let req = ModifyOrderRequest {
-            id: client_id.to_string(),
+        let req = CreateOrderRequest {
+            instruction: Self::tif_to_instruction(replace.time_in_force).to_string(),
             market,
             price: price.to_string(),
             side: if matches!(replace.side, Side::LONG) {
@@ -637,15 +715,14 @@ impl Executor for ParadexLightExecutor {
                 "LIMIT"
             }
             .to_string(),
+            client_id: Some(client_id.to_string()),
         };
 
         let body = serde_json::to_string(&req)?;
-        let path = format!("/v1/orders/{}", client_id);
-
         let client = self.pool.get_connection_tls(&self.api_host, 443)?;
 
         let http_req_id = client
-            .put(&path)
+            .post("/v1/orders")
             .header("Authorization", &self.auth_header)
             .header("Content-Type", "application/json")
             .body(body)
@@ -653,7 +730,10 @@ impl Executor for ParadexLightExecutor {
 
         self.pending
             .insert(http_req_id, RequestType::Replace(replace));
-        debug!("replace_order sent, http_req_id={}", http_req_id);
+        debug!(
+            "replace_order sent (cancel+place), http_req_id={}",
+            http_req_id
+        );
         Ok(())
     }
 
@@ -692,7 +772,8 @@ impl Executor for ParadexLightExecutor {
 
         match req_type {
             RequestType::Place(order) => {
-                Some(Self::parse_place_response(http_req_id, result, order))
+                let (response, _oid_opt) = Self::parse_place_response(http_req_id, result, order);
+                Some(response)
             }
             RequestType::Cancel(cancel) => {
                 Some(Self::parse_cancel_response(http_req_id, result, cancel))

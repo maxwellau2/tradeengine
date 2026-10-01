@@ -1,5 +1,6 @@
 use crate::strategy::context::StrategyContext;
 use crate::types::common::Order;
+use crate::types::trade::Trade;
 use crate::types::{kline::Kline, orderbook::Orderbook};
 
 /// Strategy trait - implement this to create your trading strategy
@@ -18,6 +19,9 @@ pub trait Strategy {
 
     /// Called when kline (candlestick) update is received
     fn on_kline(&mut self, kline: &Kline, ctx: &StrategyContext);
+
+    /// Called when trade event is received from exchange tape
+    fn on_trade(&mut self, trade: &Trade, ctx: &StrategyContext);
 
     /// Called when strategy starts (before market data flows)
     fn on_start(&mut self, ctx: &StrategyContext);

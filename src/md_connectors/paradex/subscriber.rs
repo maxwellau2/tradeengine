@@ -8,6 +8,7 @@
 use crate::types::common::Venue;
 use crate::types::orderbook::Orderbook;
 use crate::types::packet::MDMessage;
+use crate::types::trade::Trade;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use simd_json::base::ValueAsScalar;
@@ -35,7 +36,15 @@ impl ParadexSubscription {
     /// format: order_book.{symbol}.snapshot@{depth}@{interval}
     pub fn orderbook(symbol: &str) -> Self {
         Self {
-            channel: format!("order_book.{}-USD-PERP.snapshot@15@50ms", symbol),
+            channel: format!("order_book.{}.snapshot@15@50ms", symbol),
+        }
+    }
+
+    /// create trades subscription
+    /// format: trades.{symbol}
+    pub fn trades(symbol: &str) -> Self {
+        Self {
+            channel: format!("trades.{}", symbol),
         }
     }
 
@@ -143,6 +152,16 @@ impl ParadexMDSubscriber {
                 return None;
             }
             return Some(MDMessage::Orderbook(self.orderbook_buffer.clone()));
+        }
+
+        if channel.starts_with("trades.") {
+            match Trade::from_paradex(params) {
+                Some(trade) => return Some(MDMessage::Trade(trade)),
+                None => {
+                    debug!("failed to parse trade from channel: {}", channel);
+                    return None;
+                }
+            }
         }
 
         None

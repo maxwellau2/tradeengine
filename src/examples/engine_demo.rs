@@ -12,7 +12,7 @@ use md_feed::{
     types::{
         common::{
             ClientOrderId, Order, OrderType, PassportId, Side, TimeInForce, Venue,
-            client_order_id_from_u8,
+            client_order_id_from_u32,
         },
         kline::Kline,
         orderbook::Orderbook,
@@ -78,6 +78,7 @@ impl Strategy for DummyStrategy {
     fn on_order_update(&mut self, _order: &Order, _ctx: &StrategyContext) {}
     fn on_fill(&mut self, _order: &Order, _ctx: &StrategyContext) {}
     fn on_position_update(&mut self, _ctx: &StrategyContext) {}
+    fn on_trade(&mut self, trade: &md_feed::types::trade::Trade, ctx: &StrategyContext) {}
 }
 
 async fn test_engine_creation() {

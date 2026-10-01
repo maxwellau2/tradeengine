@@ -15,6 +15,66 @@ pub struct HlWsMessage {
     pub data: HlWsData,
 }
 
+// ============================================================================
+// order status info response parsing
+// ============================================================================
+
+/// info response wrapper for ws post
+#[derive(Debug, Deserialize)]
+pub struct HlInfoWsMessage {
+    pub channel: String,
+    pub data: HlInfoWsData,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HlInfoWsData {
+    pub id: u8,
+    pub response: HlInfoResponse,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum HlInfoResponse {
+    #[serde(rename = "info")]
+    Info { payload: HlInfoPayload },
+}
+
+/// info payload - can be orderStatus or other info types
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum HlInfoPayload {
+    OrderStatus(HlOrderStatusResp),
+    Unknown(serde_json::Value),
+}
+
+/// orderStatus response from info endpoint
+#[derive(Debug, Deserialize)]
+pub struct HlOrderStatusResp {
+    pub status: String, // "order" or "unknownOid"
+    pub order: Option<HlOrderInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HlOrderInfo {
+    pub order: HlOrderDetails,
+    pub status: String, // "open", "filled", "canceled", etc
+    pub status_timestamp: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HlOrderDetails {
+    pub coin: String,
+    pub side: String, // "A" for ask/sell, "B" for bid/buy
+    pub limit_px: String,
+    pub sz: String,
+    pub oid: u64,
+    pub timestamp: u64,
+    pub orig_sz: String,
+    pub cloid: Option<String>,
+}
+
 /// data envelope containing request id and response
 #[derive(Debug, Deserialize)]
 pub struct HlWsData {
@@ -265,9 +325,12 @@ impl HyperliquidResponse {
 // hyperliquid response conversion - maps hl-specific parsed response to generic types
 // ============================================================================
 
-use crate::types::trade_server::{
-    CancelOrder, CancelOrderResp, CancelOrderStatus, OrderResponse, PlaceOrder, PlaceOrderResp,
-    PlaceOrderStatus, ReplaceOrder, ReplaceOrderResp, ReplaceOrderStatus,
+use crate::types::{
+    common::{ClientOrderId, Order, OrderState, OrderType, Side, Symbol, Venue},
+    trade_server::{
+        CancelOrder, CancelOrderResp, CancelOrderStatus, PlaceOrder, PlaceOrderResp,
+        PlaceOrderStatus, QueryStaleOrderResp, ReplaceOrder, ReplaceOrderResp, ReplaceOrderStatus,
+    },
 };
 
 /// convert hyperliquid response to generic PlaceOrderResp
@@ -327,6 +390,58 @@ pub fn to_replace_resp(resp: HyperliquidResponse, request: ReplaceOrder) -> Repl
     }
 }
 
+/// parse order status info response and convert to QueryStaleOrderResp
+pub fn parse_order_status_resp(text: &str, cloid: ClientOrderId) -> Option<QueryStaleOrderResp> {
+    let msg: HlInfoWsMessage = serde_json::from_str(text).ok()?;
+    let HlInfoResponse::Info { payload } = msg.data.response;
+
+    match payload {
+        HlInfoPayload::OrderStatus(resp) => {
+            if resp.status == "unknownOid" || resp.order.is_none() {
+                // order not found on exchange
+                return Some(QueryStaleOrderResp::not_found(cloid, Venue::Hyperliquid));
+            }
+
+            let info = resp.order?;
+            let details = &info.order;
+
+            // convert hl status to OrderState
+            let state = match info.status.as_str() {
+                "open" => OrderState::NEW,
+                "filled" => OrderState::FILLED,
+                "canceled" | "marginCanceled" => OrderState::CANCELLED,
+                "rejected" => OrderState::REJECTED,
+                "triggered" => OrderState::NEW, // triggered orders become open
+                _ => OrderState::UNKNOWN,
+            };
+
+            // convert side: "A" = ask/sell, "B" = bid/buy
+            let side = if details.side == "B" {
+                Side::LONG
+            } else {
+                Side::SHORT
+            };
+
+            let order = Order {
+                client_order_id: cloid,
+                symbol: Symbol::new(&details.coin),
+                venue: Venue::Hyperliquid,
+                side,
+                price: details.limit_px.parse().unwrap_or(0.0),
+                qty: details.orig_sz.parse().unwrap_or(0.0),
+                filled_qty: details.orig_sz.parse::<f64>().unwrap_or(0.0)
+                    - details.sz.parse::<f64>().unwrap_or(0.0),
+                order_type: OrderType::LIMIT,
+                time_in_force: TimeInForce::GTC, // hl doesn't return tif in status
+                state,
+            };
+
+            Some(QueryStaleOrderResp::found(cloid, Venue::Hyperliquid, order))
+        }
+        HlInfoPayload::Unknown(_) => None,
+    }
+}
+
 // response struct for /info meta endpoint
 // serde ignores unknown fields by default, so we only define what we need
 #[derive(Deserialize)]
@@ -352,22 +467,53 @@ pub fn tif_to_hl(tif: TimeInForce) -> &'static str {
     }
 }
 
-// format price/size as strings, removing trailing zeros
-pub fn format_float(val: f64) -> String {
-    let s = format!("{:.8}", val);
+// format price to 5 significant figures, max (6 - sz_decimals) decimal places
+// sz_decimals is the asset's size decimal precision from meta endpoint
+// integers always valid regardless of sig figs
+pub fn format_price(val: f64, sz_decimals: u8) -> String {
+    // if it's effectively an integer, return as integer
+    if (val.round() - val).abs() < 1e-9 {
+        return format!("{:.0}", val.round());
+    }
+
+    // max decimal places for price = 6 - sz_decimals (perps)
+    let max_decimals = (6_i32 - sz_decimals as i32).max(0) as usize;
+
+    // round to 5 significant figures
+    let magnitude = val.abs().log10().floor() as i32;
+    let scale = 10_f64.powi(4 - magnitude); // 5 sig figs means 4 digits after first
+    let rounded = (val * scale).round() / scale;
+
+    // use the lesser of: sig fig decimals needed, or max allowed decimals
+    let sig_fig_decimals = (4 - magnitude).max(0) as usize;
+    let decimals = sig_fig_decimals.min(max_decimals);
+
+    // re-round to actual decimal places we'll use
+    let final_scale = 10_f64.powi(decimals as i32);
+    let final_rounded = (rounded * final_scale).round() / final_scale;
+
+    let s = format!("{:.prec$}", final_rounded, prec = decimals);
     let s = s.trim_end_matches('0');
     let s = s.trim_end_matches('.');
     s.to_string()
 }
 
 // format size with specific decimal precision (for sz_decimals)
+// truncates to sz_decimals places, removes trailing decimal zeros only
 pub fn format_size(val: f64, decimals: u8) -> String {
     let multiplier = 10_f64.powi(decimals as i32);
     let rounded = (val * multiplier).floor() / multiplier;
-    format!("{:.prec$}", rounded, prec = decimals as usize)
-        .trim_end_matches('0')
-        .trim_end_matches('.')
-        .to_string()
+
+    if decimals == 0 {
+        // no decimals, just format as integer
+        return format!("{:.0}", rounded);
+    }
+
+    // format with decimals, then trim trailing zeros after decimal point
+    let s = format!("{:.prec$}", rounded, prec = decimals as usize);
+    let s = s.trim_end_matches('0');
+    let s = s.trim_end_matches('.');
+    s.to_string()
 }
 
 // parse formatted cloid back to simple form

@@ -4,3 +4,5 @@ CLAUDE.md
 claude_todo.md
 TODO.md
 .claude/
+/logs/*
+/src/main

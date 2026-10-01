@@ -6,12 +6,14 @@
 // - kline (candle) parsing with close detection
 // - json ping heartbeat
 
-use crate::types::common::{KlineInterval, Symbol, Venue};
+use crate::types::common::{KlineInterval, Side, Symbol, Venue};
 use crate::types::kline::Kline;
 use crate::types::orderbook::Orderbook;
 use crate::types::packet::MDMessage;
+use crate::types::trade::{Trade, TradeType};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use simd_json::prelude::ValueAsArray;
 use simd_json::prelude::{ValueAsScalar, ValueObjectAccess};
 use std::collections::HashMap;
 use tokio::net::TcpStream;
@@ -35,6 +37,9 @@ pub enum HyperliquidSubscription {
         coin: String,
         interval: KlineInterval,
     },
+    Trades {
+        coin: String,
+    },
 }
 
 impl HyperliquidSubscription {
@@ -51,6 +56,12 @@ impl HyperliquidSubscription {
         }
     }
 
+    pub fn trades(coin: &str) -> Self {
+        Self::Trades {
+            coin: coin.to_string(),
+        }
+    }
+
     fn to_subscribe_msg(&self) -> Value {
         match self {
             Self::Orderbook { coin } => {
@@ -63,6 +74,12 @@ impl HyperliquidSubscription {
                 serde_json::json!({
                     "method": "subscribe",
                     "subscription": { "type": "candle", "coin": coin, "interval": interval.to_string() }
+                })
+            }
+            Self::Trades { coin } => {
+                serde_json::json!({
+                    "method": "subscribe",
+                    "subscription": { "type": "trades", "coin": coin }
                 })
             }
         }
@@ -180,6 +197,37 @@ impl HyperliquidMDSubscriber {
 
                 self.kline_tracker.insert(key, self.kline_buffer.clone());
                 Some(MDMessage::Kline(self.kline_buffer.clone()))
+            }
+            "trades" => {
+                // trades channel returns array of trades, emit each one
+                // for now just emit the last trade in the batch (most recent)
+                let data = val.get("data")?;
+                let trades_arr = data.as_array()?;
+                let last_trade = trades_arr.last()?;
+
+                let coin = last_trade.get("coin")?.as_str()?;
+                let side_str = last_trade.get("side")?.as_str()?;
+                let px: f64 = last_trade.get("px")?.as_str()?.parse().ok()?;
+                let sz: f64 = last_trade.get("sz")?.as_str()?.parse().ok()?;
+                let time = last_trade.get("time")?.as_u64()?;
+
+                let side = match side_str {
+                    "B" => Side::LONG,  // buyer aggressor
+                    "A" => Side::SHORT, // seller aggressor
+                    _ => Side::UNKNOWN,
+                };
+
+                let trade = Trade {
+                    symbol: Symbol::new(coin),
+                    venue: Venue::Hyperliquid,
+                    price: px,
+                    size: sz,
+                    side,
+                    timestamp: time,
+                    trade_type: TradeType::Fill,
+                };
+
+                Some(MDMessage::Trade(trade))
             }
             "subscriptionResponse" => {
                 debug!("subscription confirmed");

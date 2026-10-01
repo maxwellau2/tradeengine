@@ -9,7 +9,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::types::{
-    common::PassportId,
+    common::{ClientOrderId, PassportId},
     trade_server::{CancelOrder, OrderResponse, PlaceOrder, ReplaceOrder},
 };
 
@@ -32,6 +32,9 @@ pub trait Executor: Send {
     async fn place_order(&mut self, order: PlaceOrder) -> Result<(), Self::Error>;
     async fn cancel_order(&mut self, cancel: CancelOrder) -> Result<(), Self::Error>;
     async fn replace_order(&mut self, replace: ReplaceOrder) -> Result<(), Self::Error>;
+
+    /// send query for single order status (response comes via produce())
+    async fn query_order_status(&mut self, cloid: ClientOrderId) -> Result<(), Self::Error>;
 }
 
 /// enum wrapper for all executor types, enables storing different executors in a vec
@@ -39,6 +42,7 @@ pub trait Executor: Send {
 pub enum AnyExecutor {
     Hyperliquid(HyperliquidExecutor),
     ParadexLight(ParadexLightExecutor),
+    // TODO: Lighter(LighterExecutor),
 }
 
 impl AnyExecutor {
@@ -74,6 +78,13 @@ impl AnyExecutor {
         match self {
             AnyExecutor::Hyperliquid(e) => e.replace_order(replace).await.map_err(Into::into),
             AnyExecutor::ParadexLight(e) => e.replace_order(replace).await.map_err(Into::into),
+        }
+    }
+
+    pub async fn query_order_status(&mut self, cloid: ClientOrderId) -> Result<()> {
+        match self {
+            AnyExecutor::Hyperliquid(e) => e.query_order_status(cloid).await.map_err(Into::into),
+            AnyExecutor::ParadexLight(e) => e.query_order_status(cloid).await.map_err(Into::into),
         }
     }
 }

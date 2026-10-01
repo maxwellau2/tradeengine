@@ -4,9 +4,10 @@ use crate::types::{
     funding::FundingInfo,
     kline::Kline,
     orderbook::Orderbook,
+    trade::Trade,
     trade_server::{
-        CancelOrder, CancelOrderResp, PlaceOrder, PlaceOrderResp, ReplaceOrder, ReplaceOrderResp,
-        StateUpdate,
+        CancelOrder, CancelOrderResp, PlaceOrder, PlaceOrderResp, QueryStaleOrder,
+        QueryStaleOrderResp, ReplaceOrder, ReplaceOrderResp, StateUpdate,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ pub enum MDMessage {
     Kline(Kline),
     AssetCtx(AssetCtx),
     FundingInfo(FundingInfo),
+    Trade(Trade),
 }
 
 #[derive(Debug, Clone)]
@@ -41,10 +43,12 @@ pub enum TSInternalMessage {
     PlaceOrder(PlaceOrder),
     CancelOrder(CancelOrder),
     ReplaceOrder(ReplaceOrder),
+    QueryStaleOrder(QueryStaleOrder),
     // from execution
     CancelOrderResp(CancelOrderResp),
     PlaceOrderResp(PlaceOrderResp),
     ReplaceOrderResp(ReplaceOrderResp),
+    QueryStaleOrderResp(QueryStaleOrderResp),
     // from state subscriber
     StateUpdate(StateUpdate),
 }

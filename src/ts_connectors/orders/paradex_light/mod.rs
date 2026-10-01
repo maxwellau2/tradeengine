@@ -27,10 +27,12 @@ use crate::ts_connectors::signature_utils::paradex::{
     OrderType as SignOrderType, Side as SignSide, account_address, auth_headers,
     derive_l2_private_key, format_signature, sign_modify_order, sign_order,
 };
-use crate::types::common::{OrderType, PassportId, Side, TimeInForce};
+use crate::types::common::{
+    ClientOrderId, Order, OrderState, OrderType, PassportId, Side, Symbol, TimeInForce, Venue,
+};
 use crate::types::trade_server::{
     CancelOrder, CancelOrderResp, CancelOrderStatus, OrderResponse, PlaceOrder, PlaceOrderResp,
-    PlaceOrderStatus, ReplaceOrder, ReplaceOrderResp, ReplaceOrderStatus,
+    PlaceOrderStatus, QueryStaleOrderResp, ReplaceOrder, ReplaceOrderResp, ReplaceOrderStatus,
 };
 
 use error::{ParadexLightError, ParadexLightResult};
@@ -98,6 +100,24 @@ enum RequestType {
     Place(PlaceOrder),
     Cancel(CancelOrder),
     Replace(ReplaceOrder),
+    QueryStale(ClientOrderId),
+}
+
+/// paradex single order response from /v1/orders/by_client_id/:client_id
+#[derive(Debug, Deserialize)]
+struct OrderQueryItem {
+    id: String,
+    client_id: Option<String>,
+    market: String,
+    side: String,
+    #[serde(rename = "type")]
+    order_type: String,
+    size: String,
+    remaining_size: String,
+    price: String,
+    status: String,
+    avg_fill_price: Option<String>,
+    cancel_reason: Option<String>,
 }
 
 /// jwt refresh threshold - refresh when 50 minutes old (token valid for 60 min)
@@ -300,10 +320,14 @@ impl ParadexLightExecutor {
         result: ResponseResult,
         order: PlaceOrder,
     ) -> (OrderResponse, Option<String>) {
+        let cloid = order.client_order_id;
         let (status, oid_str) = match result {
             ResponseResult::Success(resp) => {
+                let body = resp.text().unwrap_or_default();
+                info!(cloid = %cloid, status = resp.status, body = %body, "[RESP:PLACE]");
+
                 if resp.is_success() {
-                    match resp.json::<OrderResp>() {
+                    match serde_json::from_str::<OrderResp>(&body) {
                         Ok(order_resp) => {
                             let oid = order_resp.id.parse::<u64>().unwrap_or(0);
                             let oid_string = order_resp.id.clone();
@@ -332,21 +356,26 @@ impl ParadexLightExecutor {
                         ),
                     }
                 } else {
-                    let body = resp.text().unwrap_or_default();
                     (
                         PlaceOrderStatus::Rejected(format!("http {}: {}", resp.status, body)),
                         None,
                     )
                 }
             }
-            ResponseResult::Timeout { duration, .. } => (
-                PlaceOrderStatus::Rejected(format!("timeout: {:?}", duration)),
-                None,
-            ),
-            ResponseResult::Error { error, .. } => (
-                PlaceOrderStatus::Rejected(format!("error: {}", error)),
-                None,
-            ),
+            ResponseResult::Timeout { duration, .. } => {
+                info!(cloid = %cloid, "[RESP:PLACE] timeout: {:?}", duration);
+                (
+                    PlaceOrderStatus::Rejected(format!("timeout: {:?}", duration)),
+                    None,
+                )
+            }
+            ResponseResult::Error { error, .. } => {
+                info!(cloid = %cloid, "[RESP:PLACE] error: {}", error);
+                (
+                    PlaceOrderStatus::Rejected(format!("error: {}", error)),
+                    None,
+                )
+            }
         };
 
         (
@@ -364,19 +393,24 @@ impl ParadexLightExecutor {
         result: ResponseResult,
         cancel: CancelOrder,
     ) -> OrderResponse {
+        let cloid = cancel.client_order_id;
         let status = match result {
             ResponseResult::Success(resp) => {
+                let body = resp.text().unwrap_or_default();
+                info!(cloid = %cloid, status = resp.status, body = %body, "[RESP:CANCEL]");
+
                 if resp.status == 204 || resp.is_success() {
                     CancelOrderStatus::Success
                 } else {
-                    let body = resp.text().unwrap_or_default();
                     CancelOrderStatus::Failed(format!("http {}: {}", resp.status, body))
                 }
             }
             ResponseResult::Timeout { duration, .. } => {
+                info!(cloid = %cloid, "[RESP:CANCEL] timeout: {:?}", duration);
                 CancelOrderStatus::Failed(format!("timeout: {:?}", duration))
             }
             ResponseResult::Error { error, .. } => {
+                info!(cloid = %cloid, "[RESP:CANCEL] error: {}", error);
                 CancelOrderStatus::Failed(format!("error: {}", error))
             }
         };
@@ -415,6 +449,86 @@ impl ParadexLightExecutor {
             request: replace,
             status,
         })
+    }
+
+    fn parse_query_stale_response(result: ResponseResult, cloid: ClientOrderId) -> OrderResponse {
+        let resp = match result {
+            ResponseResult::Success(resp) => {
+                let body = resp.text().unwrap_or_default();
+                info!(cloid = %cloid, status = resp.status, body = %body, "[RESP:QUERY_STALE]");
+
+                if resp.is_success() {
+                    // endpoint returns single order object, not array
+                    match serde_json::from_str::<OrderQueryItem>(&body) {
+                        Ok(item) => {
+                            // determine state from status and cancel_reason
+                            let state = match item.status.as_str() {
+                                "NEW" | "OPEN" => OrderState::NEW,
+                                "CLOSED" => {
+                                    // CLOSED can mean filled or cancelled, check remaining_size
+                                    let remaining: f64 = item.remaining_size.parse().unwrap_or(0.0);
+                                    if remaining == 0.0 {
+                                        OrderState::FILLED
+                                    } else {
+                                        // has remaining size, was cancelled
+                                        OrderState::CANCELLED
+                                    }
+                                }
+                                "CANCELED" => OrderState::CANCELLED,
+                                "REJECTED" => OrderState::REJECTED,
+                                _ => OrderState::UNKNOWN,
+                            };
+                            let side = if item.side == "BUY" {
+                                Side::LONG
+                            } else {
+                                Side::SHORT
+                            };
+                            let order_type = if item.order_type == "MARKET" {
+                                OrderType::MARKET
+                            } else {
+                                OrderType::LIMIT
+                            };
+                            let qty: f64 = item.size.parse().unwrap_or(0.0);
+                            let remaining: f64 = item.remaining_size.parse().unwrap_or(0.0);
+
+                            let order = Order {
+                                client_order_id: cloid,
+                                symbol: Symbol::new(&item.market),
+                                venue: Venue::Paradex,
+                                side,
+                                price: item.price.parse().unwrap_or(0.0),
+                                qty,
+                                filled_qty: qty - remaining,
+                                order_type,
+                                time_in_force: TimeInForce::GTC,
+                                state,
+                            };
+                            QueryStaleOrderResp::found(cloid, Venue::Paradex, order)
+                        }
+                        Err(e) => QueryStaleOrderResp::failed(cloid, Venue::Paradex, e.to_string()),
+                    }
+                } else if resp.status == 404 || resp.status == 400 {
+                    // 404 = not found, 400 = order does not exist (same meaning)
+                    QueryStaleOrderResp::not_found(cloid, Venue::Paradex)
+                } else {
+                    QueryStaleOrderResp::failed(
+                        cloid,
+                        Venue::Paradex,
+                        format!("http {}: {}", resp.status, body),
+                    )
+                }
+            }
+            ResponseResult::Timeout { duration, .. } => QueryStaleOrderResp::failed(
+                cloid,
+                Venue::Paradex,
+                format!("timeout: {:?}", duration),
+            ),
+            ResponseResult::Error { error, .. } => {
+                QueryStaleOrderResp::failed(cloid, Venue::Paradex, format!("error: {}", error))
+            }
+        };
+
+        OrderResponse::QueryStaleOrder(resp)
     }
 }
 
@@ -737,6 +851,28 @@ impl Executor for ParadexLightExecutor {
         Ok(())
     }
 
+    async fn query_order_status(&mut self, cloid: ClientOrderId) -> ParadexLightResult<()> {
+        let client_id = cloid.as_str();
+        if client_id.is_empty() {
+            return Err(ParadexLightError::MissingCloid);
+        }
+
+        // use by_client_id endpoint to get order regardless of status
+        let path = format!("/v1/orders/by_client_id/{}", client_id);
+
+        let client = self.pool.get_connection_tls(&self.api_host, 443)?;
+
+        let http_req_id = client
+            .get(&path)
+            .header("Authorization", &self.auth_header)
+            .send()?;
+
+        self.pending
+            .insert(http_req_id, RequestType::QueryStale(cloid));
+        debug!("query_order_status sent, http_req_id={}", http_req_id);
+        Ok(())
+    }
+
     async fn produce(&mut self) -> Option<OrderResponse> {
         // proactively refresh jwt if nearing expiration
         if self.jwt_needs_refresh() {
@@ -781,6 +917,7 @@ impl Executor for ParadexLightExecutor {
             RequestType::Replace(replace) => {
                 Some(Self::parse_replace_response(http_req_id, result, replace))
             }
+            RequestType::QueryStale(cloid) => Some(Self::parse_query_stale_response(result, cloid)),
         }
     }
 }

@@ -5,4 +5,5 @@ pub mod funding;
 pub mod kline;
 pub mod orderbook;
 pub mod packet;
+pub mod trade;
 pub mod trade_server;

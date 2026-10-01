@@ -114,6 +114,9 @@ pub async fn main() -> WsResult<()> {
                 MDMessage::FundingInfo(funding) => {
                     println!("FundingInfo: {:?}", funding);
                 }
+                MDMessage::Trade(trade) => {
+                    println!("Trade: {:?}", trade);
+                }
             }
         }
     }

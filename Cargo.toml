@@ -18,6 +18,7 @@ tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
 anyhow = "1.0.100"
 tracing = "0.1.41"
 tracing-subscriber = {version = "0.3.20", features = ["env-filter"]}
+tracing-appender = "0.2"
 log = "0.4.28"
 env_logger = "0.11.8"
 fast-float = "0.2.0"
@@ -31,7 +32,8 @@ ethers = { version = "2", features = ["eip712"] }
 rmp-serde = "1"
 tiny-keccak = { version = "2", features = ["keccak"] }
 hex = "0.4"
-reqwest = {version = "0.12.26", features = ["blocking", "json"] }
+reqwest = {version = "0.12.26", features = ["blocking", "json", "rustls-tls"], default-features = false }
+rustls = { version = "0.23", features = ["ring"] }
 serde_yaml = "0.9"
 ratatui = "0.28"
 crossterm = "0.28"
@@ -58,10 +60,6 @@ crossbeam-channel = "0.5.15"
 [lib]
 name = "md_feed"
 path = "src/lib.rs"
-
-[[bin]]
-name = "main"
-path = "src/main.rs"
 
 [[bin]]
 name = "paradex_ws_example"
@@ -94,3 +92,19 @@ path = "src/examples/ts_cli.rs"
 [[bin]]
 name = "test_subscribers"
 path = "src/examples/test_subscribers.rs"
+
+[[bin]]
+name = "mm_strat"
+path = "src/main/mm_strat.rs"
+
+[[bin]]
+name = "momentum_strat"
+path = "src/main/momentum_strat.rs"
+
+[[bin]]
+name = "onesided_mm"
+path = "src/main/onesided_mm.rs"
+
+[[bin]]
+name = "ts_runner_prod"
+path = "src/main/ts_runner.rs"

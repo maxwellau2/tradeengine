@@ -81,7 +81,7 @@ pub fn client_order_id_from_str(s: &str) -> ClientOrderId {
     ClientOrderId::new(s)
 }
 
-pub fn client_order_id_from_u8(n: u8) -> ClientOrderId {
+pub fn client_order_id_from_u32(n: u32) -> ClientOrderId {
     ClientOrderId::new(n.to_string().as_str())
 }
 
@@ -97,6 +97,7 @@ pub enum Venue {
     #[default]
     Hyperliquid,
     Binance,
+    Lighter,
     Paradex,
     Okx,
 }
@@ -106,6 +107,7 @@ impl Venue {
         match s.to_lowercase().as_str() {
             "hyperliquid" => Some(Venue::Hyperliquid),
             "binance" => Some(Venue::Binance),
+            "lighter" => Some(Venue::Lighter),
             "paradex" => Some(Venue::Paradex),
             "okx" => Some(Venue::Okx),
             _ => None,
@@ -155,7 +157,7 @@ impl KlineInterval {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ZeroCopySend)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, ZeroCopySend)]
 #[repr(C)]
 pub enum Side {
     LONG,
@@ -188,8 +190,10 @@ pub enum TimeInForce {
 #[repr(C)]
 pub enum OrderState {
     PENDING_NEW,
+    EXECUTOR_ACK, // executor confirmed, awaiting state subscriber confirmation
     NEW,
     PARTIALLY_FILLED,
+    PENDING_CANCEL,
     // terminal states
     FILLED,
     CANCELLED,

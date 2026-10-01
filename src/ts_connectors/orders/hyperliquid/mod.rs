@@ -5,7 +5,7 @@ use crate::config_parser::passport::PassportConfig;
 use crate::ts_connectors::orders::Executor;
 use crate::ts_connectors::orders::signature_utls::sign_l1_action;
 use crate::types::clock::timestamp_millis;
-use crate::types::common::{PassportId, Side};
+use crate::types::common::{ClientOrderId, Order, PassportId, Side};
 use crate::types::trade_server::OrderResponse;
 use crate::types::trade_server::{self, EngineTSMessageType};
 use error::{HLExecutorError, HyperliquidResult};
@@ -13,8 +13,8 @@ use ethers::prelude::LocalWallet;
 use futures_util::{FutureExt, SinkExt, StreamExt};
 pub use hyperliquid_utils::parse_cloid;
 use hyperliquid_utils::{
-    HyperliquidResponse, MetaResponse, format_cloid, format_float, format_size, tif_to_hl,
-    to_cancel_resp, to_place_resp, to_replace_resp,
+    HyperliquidResponse, MetaResponse, format_cloid, format_price, format_size,
+    parse_order_status_resp, tif_to_hl, to_cancel_resp, to_place_resp, to_replace_resp,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -31,7 +31,6 @@ const TESTNET_WS_URL: &str = "wss://api.hyperliquid-testnet.xyz/ws";
 const MAINNET_HTTP_URL: &str = "https://api.hyperliquid.xyz";
 
 pub struct HyperliquidExecutor {
-    #[allow(dead_code)] // may be used for order response validation
     user_address: String,
     wallet: LocalWallet,
     ws_stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
@@ -44,6 +43,8 @@ pub struct HyperliquidExecutor {
     heartbeat_interval: Interval,
     // monotonic nonce to avoid duplicate nonce errors
     last_nonce: AtomicU64,
+    // pending stale order queries: request_id -> cloid
+    pending_stale_queries: HashMap<u8, ClientOrderId>,
 }
 
 impl HyperliquidExecutor {
@@ -184,10 +185,15 @@ impl HyperliquidExecutor {
             }
         });
 
-        debug!("ws post id={}: {:?}", request_id, ws_msg);
+        info!("ws post id={}: {:?}", request_id, ws_msg);
 
         let msg_str = serde_json::to_string(&ws_msg)?;
-        ws.send(Message::Text(msg_str)).await?;
+        if let Err(e) = ws.send(Message::Text(msg_str)).await {
+            // connection broken, mark for reconnect
+            warn!("ws send failed, marking for reconnect: {}", e);
+            self.ws_stream = None;
+            return Err(e.into());
+        }
 
         Ok(())
     }
@@ -200,6 +206,42 @@ impl HyperliquidExecutor {
         // try base symbol (e.g. "BTC-PERP" -> "BTC")
         let base = symbol.split('-').next().unwrap_or(symbol);
         self.asset_map.get(base).copied()
+    }
+
+    /// send info request via ws (no signature needed)
+    async fn ws_info(
+        &mut self,
+        payload: serde_json::Value,
+        request_id: u8,
+    ) -> HyperliquidResult<()> {
+        if self.ws_stream.is_none() {
+            self.connect().await;
+        }
+
+        let ws = self
+            .ws_stream
+            .as_mut()
+            .ok_or(HLExecutorError::NotConnected)?;
+
+        let ws_msg = json!({
+            "method": "post",
+            "id": request_id,
+            "request": {
+                "type": "info",
+                "payload": payload
+            }
+        });
+
+        info!("ws info id={}: {:?}", request_id, ws_msg);
+
+        let msg_str = serde_json::to_string(&ws_msg)?;
+        if let Err(e) = ws.send(Message::Text(msg_str)).await {
+            warn!("ws send failed, marking for reconnect: {}", e);
+            self.ws_stream = None;
+            return Err(e.into());
+        }
+
+        Ok(())
     }
 
     // fetch asset mappings from /info meta endpoint
@@ -243,6 +285,11 @@ impl HyperliquidExecutor {
             return None;
         }
 
+        // check if this is an info response (for stale order queries)
+        if text.contains(r#""type":"info""#) {
+            return self.parse_info_response(text);
+        }
+
         let parsed = match HyperliquidResponse::from(text) {
             Ok(resp) => resp,
             Err(e) => {
@@ -275,6 +322,18 @@ impl HyperliquidExecutor {
         };
 
         Some(response)
+    }
+
+    /// parse info response (for stale order queries)
+    fn parse_info_response(&mut self, text: &str) -> Option<OrderResponse> {
+        // extract request id from the message to find the cloid
+        let value: serde_json::Value = serde_json::from_str(text).ok()?;
+        let request_id = value["data"]["id"].as_u64()? as u8;
+
+        let cloid = self.pending_stale_queries.remove(&request_id)?;
+        let resp = parse_order_status_resp(text, cloid)?;
+
+        Some(OrderResponse::QueryStaleOrder(resp))
     }
 }
 
@@ -317,6 +376,7 @@ impl Executor for HyperliquidExecutor {
             req_map: [None; 256],
             heartbeat_interval: interval(Duration::from_secs(30)),
             last_nonce: AtomicU64::new(0),
+            pending_stale_queries: HashMap::new(),
         };
         executor.load_asset_map().await?;
 
@@ -333,6 +393,8 @@ impl Executor for HyperliquidExecutor {
             match connect_async(ws_url).await {
                 Ok((ws, _)) => {
                     self.ws_stream = Some(ws);
+                    // reset heartbeat interval so we don't immediately ping
+                    self.heartbeat_interval.reset();
                     info!("reconnected to hyperliquid ws");
                 }
                 Err(e) => error!("failed to reconnect: {}", e),
@@ -347,8 +409,12 @@ impl Executor for HyperliquidExecutor {
             .ok_or_else(|| HLExecutorError::UnknownSymbol(symbol.to_string()))?;
 
         let is_buy = matches!(order.side, Side::LONG);
-        let price = format_float(order.price);
+        let price = format_price(order.price, sz_decimals);
         let size = format_size(order.qty, sz_decimals);
+        info!(
+            "place_order: raw_qty={}, sz_decimals={}, formatted_size={}, formatted_price={}",
+            order.qty, sz_decimals, size, price
+        );
         let tif = tif_to_hl(order.time_in_force);
         let cloid_raw = order.client_order_id.as_str();
         let cloid_formatted = if cloid_raw.is_empty() {
@@ -411,7 +477,7 @@ impl Executor for HyperliquidExecutor {
         let cloid = format_cloid(cloid_raw);
 
         let is_buy = matches!(replace.side, Side::LONG);
-        let price = format_float(replace.new_price);
+        let price = format_price(replace.new_price, sz_decimals);
         let size = format_size(replace.new_qty, sz_decimals);
         let tif = tif_to_hl(replace.time_in_force);
 
@@ -426,6 +492,23 @@ impl Executor for HyperliquidExecutor {
         Ok(())
     }
 
+    async fn query_order_status(&mut self, cloid: ClientOrderId) -> HyperliquidResult<()> {
+        let cloid_formatted = format_cloid(cloid.as_str());
+
+        let payload = json!({
+            "type": "orderStatus",
+            "user": self.user_address,
+            "oid": cloid_formatted
+        });
+
+        let request_id = self.next_request_id();
+        self.ws_info(payload, request_id).await?;
+        self.pending_stale_queries.insert(request_id, cloid);
+
+        debug!("query_order_status sent: cloid={}", cloid_formatted);
+        Ok(())
+    }
+
     async fn produce(&mut self) -> Option<OrderResponse> {
         // reconnect if needed
         if self.ws_stream.is_none() {
@@ -436,16 +519,21 @@ impl Executor for HyperliquidExecutor {
         let ws = self.ws_stream.as_mut()?;
 
         // check heartbeat first (non-blocking via poll_tick)
-        if std::future::poll_fn(|cx| match self.heartbeat_interval.poll_tick(cx) {
+        let should_ping = std::future::poll_fn(|cx| match self.heartbeat_interval.poll_tick(cx) {
             std::task::Poll::Ready(_) => std::task::Poll::Ready(true),
             std::task::Poll::Pending => std::task::Poll::Ready(false),
         })
-        .await
-        {
+        .await;
+
+        if should_ping {
             trace!("sending heartbeat ping");
             let ping_msg = Message::Text(r#"{"method":"ping"}"#.to_string());
-            // fire and forget - we'll detect disconnect on next recv
-            let _ = ws.send(ping_msg).now_or_never();
+            // actually await the send
+            if let Err(e) = ws.send(ping_msg).await {
+                warn!("heartbeat ping failed, marking for reconnect: {}", e);
+                self.ws_stream = None;
+                return None;
+            }
         }
 
         // non-blocking check for ws message using now_or_never
@@ -457,7 +545,11 @@ impl Executor for HyperliquidExecutor {
                 return self.parse(&txt);
             }
             Some(Some(Ok(Message::Ping(data)))) => {
-                let _ = ws.send(Message::Pong(data)).now_or_never();
+                // must await the pong send to ensure it actually goes out
+                if let Err(e) = ws.send(Message::Pong(data)).await {
+                    warn!("pong send failed, marking for reconnect: {}", e);
+                    self.ws_stream = None;
+                }
             }
             Some(Some(Ok(Message::Pong(_)))) => {
                 trace!("received ws pong frame");

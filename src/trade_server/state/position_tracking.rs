@@ -61,13 +61,24 @@ impl PositionTrackingUnit {
 
     /// get net position size (positive = long, negative = short)
     pub fn net_size(&self, symbol: &Symbol, venue: Venue) -> f64 {
-        self.positions
-            .get(&PositionKey::new(*symbol, venue))
-            .map_or(0.0, |p| match p.side {
-                Side::LONG => p.qty,
-                Side::SHORT => -p.qty,
-                Side::UNKNOWN => 0.0,
-            })
+        use tracing::debug;
+
+        let key = PositionKey::new(*symbol, venue);
+        let result = self.positions.get(&key).map_or(0.0, |p| match p.side {
+            Side::LONG => p.qty,
+            Side::SHORT => -p.qty,
+            Side::UNKNOWN => 0.0,
+        });
+
+        debug!(
+            "position net_size: symbol={} venue={:?} positions_count={} result={}",
+            symbol,
+            venue,
+            self.positions.len(),
+            result
+        );
+
+        result
     }
 
     /// all open positions

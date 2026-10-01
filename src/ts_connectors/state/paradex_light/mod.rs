@@ -381,6 +381,9 @@ impl ParadexLightStateSubscriber {
     }
 
     fn parse_order_update(&mut self, data: &Value) {
+        // log raw json for debugging
+        info!(json = %data, "[WS:ORDER]");
+
         let update: PdxOrderUpdate = match serde_json::from_value(data.clone()) {
             Ok(u) => u,
             Err(e) => {
@@ -413,8 +416,8 @@ impl ParadexLightStateSubscriber {
         let remaining: f64 = update.remaining_size.parse().unwrap_or(0.0);
         let filled_qty = size - remaining;
 
-        // strip -USD-PERP suffix from market
-        let symbol = Symbol::new(&update.market.replace("-USD-PERP", ""));
+        // keep full market name as symbol (e.g., LINK-USD-PERP)
+        let symbol = Symbol::new(&update.market);
 
         let order = Order {
             symbol,
@@ -433,14 +436,6 @@ impl ParadexLightStateSubscriber {
             state: status,
         };
 
-        info!(
-            market = %update.market,
-            status = %update.status,
-            size = size,
-            filled = filled_qty,
-            "pdx light: order update"
-        );
-
         let _ = self.pending.try_push(StateUpdate::OrderUpdate(order));
     }
 
@@ -453,7 +448,8 @@ impl ParadexLightStateSubscriber {
             }
         };
 
-        let symbol = Symbol::new(&update.market.replace("-USD-PERP", ""));
+        // keep full market name as symbol (e.g., LINK-USD-PERP)
+        let symbol = Symbol::new(&update.market);
         let side = if update.side == "LONG" {
             Side::LONG
         } else {

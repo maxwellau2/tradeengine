@@ -315,12 +315,63 @@ impl ReplaceOrderResp {
     }
 }
 
+/// query stale order - check status of a single pending order
+#[derive(Debug, Clone, Copy)]
+pub struct QueryStaleOrder {
+    pub venue: Venue,
+    pub client_order_id: ClientOrderId,
+}
+
+/// response for stale order query
+#[derive(Debug, Clone)]
+pub struct QueryStaleOrderResp {
+    pub client_order_id: ClientOrderId,
+    pub venue: Venue,
+    /// None if order not found on exchange (likely rejected/never received)
+    pub order: Option<Order>,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+impl QueryStaleOrderResp {
+    pub fn found(client_order_id: ClientOrderId, venue: Venue, order: Order) -> Self {
+        Self {
+            client_order_id,
+            venue,
+            order: Some(order),
+            success: true,
+            error: None,
+        }
+    }
+
+    pub fn not_found(client_order_id: ClientOrderId, venue: Venue) -> Self {
+        Self {
+            client_order_id,
+            venue,
+            order: None,
+            success: true,
+            error: None,
+        }
+    }
+
+    pub fn failed(client_order_id: ClientOrderId, venue: Venue, error: String) -> Self {
+        Self {
+            client_order_id,
+            venue,
+            order: None,
+            success: false,
+            error: Some(error),
+        }
+    }
+}
+
 /// unified response enum for matching in produce()
 #[derive(Debug)]
 pub enum OrderResponse {
     Place(PlaceOrderResp),
     Cancel(CancelOrderResp),
     Replace(ReplaceOrderResp),
+    QueryStaleOrder(QueryStaleOrderResp),
 }
 
 // =============================================================================

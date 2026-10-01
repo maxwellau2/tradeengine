@@ -52,6 +52,10 @@ impl ExecutorRunner {
             if let Some(val) = self.executor.produce().await {
                 self.handle_response(val);
             }
+
+            // yield to tokio runtime so it can process IO
+            // without this, the tight loop starves the runtime and ws never receives data
+            tokio::task::yield_now().await;
         }
     }
 
@@ -76,6 +80,10 @@ impl ExecutorRunner {
             OrderResponse::Replace(resp) => {
                 info!(venue = ?self.venue, "replace order response: {:?}", resp);
                 Packet::new(TSInternalMessage::ReplaceOrderResp(resp), seq)
+            }
+            OrderResponse::QueryStaleOrder(resp) => {
+                info!(venue = ?self.venue, "query stale order response: {:?}", resp);
+                Packet::new(TSInternalMessage::QueryStaleOrderResp(resp), seq)
             }
         };
         let res = self.outbound_queue.try_push(packet);
@@ -115,6 +123,12 @@ impl ExecutorRunner {
             TSInternalMessage::ReplaceOrder(replace) => {
                 info!(venue = ?self.venue, "replacing order: {:?}", replace);
                 self.executor.replace_order(replace).await
+            }
+            TSInternalMessage::QueryStaleOrder(query) => {
+                info!(venue = ?self.venue, "querying stale order: {:?}", query);
+                self.executor
+                    .query_order_status(query.client_order_id)
+                    .await
             }
             _ => return,
         };

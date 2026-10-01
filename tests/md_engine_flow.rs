@@ -36,6 +36,7 @@ impl Strategy for CountingStrategy {
         // println!("ob recv");
         *self.orderbook_count.lock().unwrap() += 1;
     }
+    fn on_trade(&mut self, trade: &md_feed::types::trade::Trade, ctx: &StrategyContext) {}
 
     fn on_kline(&mut self, _kline: &Kline, _ctx: &StrategyContext) {}
     fn on_start(&mut self, _ctx: &StrategyContext) {}

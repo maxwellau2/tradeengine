@@ -36,6 +36,7 @@ pub trait StateSubscriber: Send {
 pub enum AnyStateSubscriber {
     Hyperliquid(HyperliquidStateSubscriber),
     ParadexLight(ParadexLightStateSubscriber),
+    // TODO: Lighter(LighterStateSubscriber),
 }
 
 impl AnyStateSubscriber {

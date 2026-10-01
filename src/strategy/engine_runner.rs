@@ -195,8 +195,22 @@ impl EngineRunner {
                     }
                     // paradex doesn't support klines yet
 
+                    // trades: union of orderbook and kline tickers
+                    let mut trade_symbols: std::collections::HashSet<&str> =
+                        std::collections::HashSet::new();
+                    for symbol in &subs.orderbook {
+                        trade_symbols.insert(symbol.as_str());
+                    }
+                    for kline_sub in &subs.kline {
+                        let (symbol, _) = parse_kline_sub(kline_sub);
+                        trade_symbols.insert(symbol);
+                    }
+                    for symbol in trade_symbols {
+                        subscriptions.push(ParadexSubscription::trades(symbol));
+                    }
+
                     if !subscriptions.is_empty() {
-                        info!("paradex: {} orderbook subscriptions", subscriptions.len());
+                        info!("paradex: {} subscriptions", subscriptions.len());
                         let is_mainnet = !config.testnet;
                         let subscriber = ParadexMDSubscriber::new(subscriptions, is_mainnet);
                         feeds.push(AnyMDSubscriber::Paradex(subscriber));
@@ -210,6 +224,20 @@ impl EngineRunner {
                     for kline_sub in &subs.kline {
                         let (symbol, interval) = parse_kline_sub(kline_sub);
                         subscriptions.push(HyperliquidSubscription::kline(symbol, interval));
+                    }
+
+                    // trades: union of orderbook and kline tickers
+                    let mut trade_symbols: std::collections::HashSet<&str> =
+                        std::collections::HashSet::new();
+                    for symbol in &subs.orderbook {
+                        trade_symbols.insert(symbol.as_str());
+                    }
+                    for kline_sub in &subs.kline {
+                        let (symbol, _) = parse_kline_sub(kline_sub);
+                        trade_symbols.insert(symbol);
+                    }
+                    for symbol in trade_symbols {
+                        subscriptions.push(HyperliquidSubscription::trades(symbol));
                     }
 
                     if !subscriptions.is_empty() {

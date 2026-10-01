@@ -18,14 +18,98 @@ use crate::types::{
     kline::Kline,
     orderbook::Orderbook,
     packet::{MDMessage, Packet},
+    trade::Trade,
 };
 use ringbuf::{HeapCons, traits::Consumer};
+use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
+
+// =============================================================================
+// trade event logger - writes json lines to logs/trade_events.jsonl
+// =============================================================================
+
+/// trade event types for analysis
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+pub enum TradeEvent {
+    /// market trade from tape
+    MarketTrade {
+        ts_us: u64,
+        symbol: String,
+        venue: String,
+        price: f64,
+        size: f64,
+        side: String,
+        trade_type: String,
+    },
+    /// our order state change
+    OrderUpdate {
+        ts_us: u64,
+        cloid: String,
+        symbol: String,
+        venue: String,
+        side: String,
+        price: f64,
+        qty: f64,
+        filled_qty: f64,
+        state: String,
+    },
+    /// our fill
+    Fill {
+        ts_us: u64,
+        cloid: String,
+        symbol: String,
+        venue: String,
+        side: String,
+        price: f64,
+        filled_qty: f64,
+    },
+    /// position change
+    Position {
+        ts_us: u64,
+        symbol: String,
+        venue: String,
+        qty: f64,
+        avg_entry: f64,
+    },
+}
+
+/// simple json line logger
+pub struct TradeEventLogger {
+    file: Option<File>,
+}
+
+impl TradeEventLogger {
+    pub fn new(path: &str) -> Self {
+        // ensure logs directory exists
+        let _ = std::fs::create_dir_all("logs");
+
+        let file = OpenOptions::new().create(true).append(true).open(path).ok();
+
+        if file.is_some() {
+            info!("trade event logger: {}", path);
+        } else {
+            warn!("failed to open trade event log: {}", path);
+        }
+
+        Self { file }
+    }
+
+    pub fn log(&mut self, event: TradeEvent) {
+        if let Some(ref mut file) = self.file {
+            if let Ok(json) = serde_json::to_string(&event) {
+                let _ = writeln!(file, "{}", json);
+            }
+        }
+    }
+}
 
 /// Generic order gateway that wraps any low-level sender
 ///
@@ -201,8 +285,8 @@ pub struct MarketDataEngine {
     /// The trading strategy
     strategy: Box<dyn Strategy>,
     context: StrategyContext,
-    /// Engine state (owned by engine, shared with context via Rc<RefCell>)
-    state: Rc<RefCell<EngineState>>,
+    /// Engine state per (venue, passport) - shared with context via Rc<RefCell>
+    state: Rc<RefCell<HashMap<(Venue, PassportId), EngineState>>>,
     /// Trade server receiver - polls for incoming messages
     ts_receiver: Box<dyn OrderGatewayRecv>,
     /// Market data consumers (one per exchange)
@@ -229,6 +313,8 @@ pub struct MarketDataEngine {
     recon_started_at: u64,
     /// number of recon retries attempted
     recon_retries: u32,
+    /// trade event logger for analysis
+    event_logger: TradeEventLogger,
 }
 
 impl MarketDataEngine {
@@ -242,14 +328,15 @@ impl MarketDataEngine {
             .expect("failed to create iceoryx2 channel - is the trade server running?");
         let (sender, receiver) = io.split();
 
-        // Create shared state
-        let state = Rc::new(RefCell::new(EngineState::new()));
+        // Create shared state map
+        let state = Rc::new(RefCell::new(HashMap::new()));
 
         // Wrap the low-level sender in a high-level gateway
         let order_gateway = Rc::new(RefCell::new(TradeServerGateway::new(sender)));
 
-        // Create context
+        // Create context and register initial (venue, passport)
         let context = StrategyContext::new(order_gateway, Rc::clone(&state));
+        context.register(venue, passport_id);
 
         Self {
             strategy,
@@ -271,6 +358,7 @@ impl MarketDataEngine {
             run_iter: 0,
             recon_started_at: 0,
             recon_retries: 0,
+            event_logger: TradeEventLogger::new("logs/trade_events.jsonl"),
         }
     }
 
@@ -295,10 +383,20 @@ impl MarketDataEngine {
             let state = self.state.borrow();
             let current = tui_state.load();
 
+            // aggregate orders/positions/balances from all (venue, passport) states
+            let mut orders = Vec::new();
+            let mut positions = Vec::new();
+            let mut balances = Vec::new();
+            for engine_state in state.values() {
+                orders.extend(engine_state.get_all_orders());
+                positions.extend(engine_state.get_all_positions());
+                balances.extend(engine_state.get_all_balances());
+            }
+
             let new_state = TUIState {
-                orders: state.get_all_orders(),
-                positions: state.get_all_positions(),
-                balances: state.get_all_balances(),
+                orders,
+                positions,
+                balances,
                 logs: current.logs.clone(),
             };
 
@@ -479,8 +577,10 @@ impl MarketDataEngine {
             }
             MDMessage::Kline(kline) => {
                 self.on_kline(&kline);
-            } // Add other message types (klines, trades, etc.) here
-
+            }
+            MDMessage::Trade(trade) => {
+                self.on_trade(&trade);
+            }
             MDMessage::AssetCtx(_asset) => {
                 // not implemented yet
             }
@@ -510,6 +610,9 @@ impl MarketDataEngine {
             }
             MDMessage::Kline(kline) => {
                 self.on_kline(&kline);
+            }
+            MDMessage::Trade(trade) => {
+                self.on_trade(&trade);
             }
             MDMessage::AssetCtx(_) => {}
             MDMessage::FundingInfo(_) => {}
@@ -645,6 +748,21 @@ impl MarketDataEngine {
         self.strategy.on_kline(&kline, &self.context);
     }
 
+    pub fn on_trade(&mut self, trade: &Trade) {
+        // log market trade
+        self.event_logger.log(TradeEvent::MarketTrade {
+            ts_us: timestamp_micros(),
+            symbol: trade.symbol.to_string(),
+            venue: format!("{:?}", trade.venue),
+            price: trade.price,
+            size: trade.size,
+            side: format!("{:?}", trade.side),
+            trade_type: format!("{:?}", trade.trade_type),
+        });
+
+        self.strategy.on_trade(trade, &self.context);
+    }
+
     /// Stop the engine
     pub fn stop(&mut self) {
         info!("Stopping MarketDataEngine");
@@ -683,14 +801,40 @@ impl MarketDataEngine {
             order.state
         );
 
+        // log order update
+        self.event_logger.log(TradeEvent::OrderUpdate {
+            ts_us: timestamp_micros(),
+            cloid: client_order_id_to_str(&order.client_order_id).to_string(),
+            symbol: order.symbol.to_string(),
+            venue: format!("{:?}", order.venue),
+            side: format!("{:?}", order.side),
+            price: order.price,
+            qty: order.qty,
+            filled_qty: order.filled_qty,
+            state: format!("{:?}", order.state),
+        });
+
         // update state first via StateManager
         {
             let mut state = self.state.borrow_mut();
-            state.apply(StateUpdate::OrderUpdate(order.clone()));
+            let key = (order.venue, self.passport_id);
+            let engine_state = state.entry(key).or_insert_with(EngineState::new);
+            engine_state.apply(StateUpdate::OrderUpdate(order.clone()));
         }
 
         // check if this is a fill
         if order.filled_qty > 0.0 {
+            // log fill separately
+            self.event_logger.log(TradeEvent::Fill {
+                ts_us: timestamp_micros(),
+                cloid: client_order_id_to_str(&order.client_order_id).to_string(),
+                symbol: order.symbol.to_string(),
+                venue: format!("{:?}", order.venue),
+                side: format!("{:?}", order.side),
+                price: order.price,
+                filled_qty: order.filled_qty,
+            });
+
             self.strategy.on_fill(&order, &self.context);
         }
 
@@ -706,10 +850,21 @@ impl MarketDataEngine {
             position.qty
         );
 
+        // log position update
+        self.event_logger.log(TradeEvent::Position {
+            ts_us: timestamp_micros(),
+            symbol: position.symbol.to_string(),
+            venue: format!("{:?}", position.venue),
+            qty: position.qty,
+            avg_entry: position.position_value / position.qty.abs().max(0.0001), // derive avg entry
+        });
+
         // update state via StateManager
         {
             let mut state = self.state.borrow_mut();
-            state.apply(StateUpdate::PositionUpdate(position));
+            let key = (position.venue, self.passport_id);
+            let engine_state = state.entry(key).or_insert_with(EngineState::new);
+            engine_state.apply(StateUpdate::PositionUpdate(position));
         }
 
         // notify strategy
@@ -727,7 +882,9 @@ impl MarketDataEngine {
         // update state via StateManager
         {
             let mut state = self.state.borrow_mut();
-            state.apply(StateUpdate::BalanceUpdate(balance));
+            let key = (balance.venue, self.passport_id);
+            let engine_state = state.entry(key).or_insert_with(EngineState::new);
+            engine_state.apply(StateUpdate::BalanceUpdate(balance));
         }
     }
 
@@ -752,7 +909,9 @@ impl MarketDataEngine {
                 client_order_id_to_str(&resp.order.client_order_id)
             );
             let mut state = self.state.borrow_mut();
-            state.apply(StateUpdate::OrderUpdate(resp.order));
+            let key = (resp.order.venue, self.passport_id);
+            let engine_state = state.entry(key).or_insert_with(EngineState::new);
+            engine_state.apply(StateUpdate::OrderUpdate(resp.order));
         }
 
         // check if this was the last response
@@ -780,7 +939,9 @@ impl MarketDataEngine {
                 resp.position.qty
             );
             let mut state = self.state.borrow_mut();
-            state.apply(StateUpdate::PositionUpdate(resp.position));
+            let key = (resp.position.venue, self.passport_id);
+            let engine_state = state.entry(key).or_insert_with(EngineState::new);
+            engine_state.apply(StateUpdate::PositionUpdate(resp.position));
         }
 
         if resp.is_last {
@@ -807,7 +968,9 @@ impl MarketDataEngine {
                 resp.balance.qty
             );
             let mut state = self.state.borrow_mut();
-            state.apply(StateUpdate::BalanceUpdate(resp.balance));
+            let key = (resp.balance.venue, self.passport_id);
+            let engine_state = state.entry(key).or_insert_with(EngineState::new);
+            engine_state.apply(StateUpdate::BalanceUpdate(resp.balance));
         }
 
         if resp.is_last {
@@ -879,8 +1042,8 @@ impl MarketDataEngine {
         }
     }
 
-    /// Get read-only access to engine state
-    pub fn get_state(&self) -> std::cell::Ref<EngineState> {
+    /// Get read-only access to all engine states
+    pub fn get_all_states(&self) -> std::cell::Ref<HashMap<(Venue, PassportId), EngineState>> {
         self.state.borrow()
     }
 }
@@ -894,6 +1057,7 @@ mod tests {
     impl Strategy for DummyStrategy {
         fn on_orderbook(&mut self, _orderbook: &Orderbook, _ctx: &StrategyContext) {}
         fn on_kline(&mut self, _kline: &Kline, _ctx: &StrategyContext) {}
+        fn on_trade(&mut self, _trade: &Trade, _ctx: &StrategyContext) {}
         fn on_start(&mut self, _ctx: &StrategyContext) {}
         fn on_disconnect(&mut self, _ctx: &StrategyContext) {}
         fn on_recon(&mut self, _ctx: &StrategyContext) {}

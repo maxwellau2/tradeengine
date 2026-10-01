@@ -1,125 +1,76 @@
-use std::sync::atomic::AtomicU8;
-
 use md_feed::{
     strategy::{context::StrategyContext, engine_runner::EngineRunner, strategy::Strategy},
     tui::{TUILogLayer, new_shared_state},
     types::{
-        common::{
-            Order, OrderState, OrderType, PassportId, Side, TimeInForce, client_order_id_from_u8,
-        },
+        common::{Order, OrderState, OrderType, PassportId, Side, TimeInForce, Venue},
         kline::Kline,
         orderbook::Orderbook,
         trade_server::{CancelOrder, PlaceOrder},
     },
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 struct DummyStrategy {
     passport_id: PassportId,
-    cloid: AtomicU8,
-}
-
-impl DummyStrategy {
-    fn next_cloid(&mut self) -> u8 {
-        // increment and wrap, but skip 0 (hyperliquid forbids cloid 0)
-        loop {
-            let prev = self
-                .cloid
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let next = prev.wrapping_add(1);
-            if next != 0 {
-                return next;
-            }
-            // if we hit 0, loop again to get 1
-        }
-    }
+    venue: Venue,
 }
 
 impl Strategy for DummyStrategy {
-    fn on_orderbook(&mut self, ob: &Orderbook, _ctx: &StrategyContext) {
+    fn on_orderbook(&mut self, ob: &Orderbook, ctx: &StrategyContext) {
         debug!(
             "Orderbook Received! best bid {:?}, best ask {:?}",
             ob.bids[0], ob.asks[0]
         );
-        let id = self.next_cloid();
-        let order = PlaceOrder::new(
-            ob.symbol,
-            ob.venue,
-            client_order_id_from_u8(id),
-            ob.bids[3].price,
-            100.0 / ob.bids[3].price,
-            Side::LONG,
-            TimeInForce::PO,
-            OrderType::LIMIT,
-            self.passport_id,
-        );
+        for _ in 0..1000 {
+            // generate unique cloid via context
+            let cloid = ctx.next_cloid(self.venue, self.passport_id);
 
-        // check if duplicate exists before placing
-        if _ctx.has_duplicate(&order) {
-            debug!("skipping duplicate order");
-            return;
-        }
-        let res = _ctx.place_order(order);
-        match res {
-            Ok(val) => {
-                info!("Placed order {:?}", val);
+            let order = PlaceOrder::new(
+                ob.symbol,
+                ob.venue,
+                cloid,
+                ob.bids[3].price,
+                100.0 / ob.bids[3].price,
+                Side::LONG,
+                TimeInForce::PO,
+                OrderType::LIMIT,
+                self.passport_id,
+            );
+
+            // check if duplicate exists before placing
+            if ctx.has_duplicate(self.venue, self.passport_id, &order) {
+                debug!("skipping duplicate order");
+                return;
             }
-            Err(e) => {
-                warn!("Error {:?}", e);
-            }
+
+            let res = ctx.place_order(order);
         }
     }
-    fn on_kline(&mut self, kline: &Kline, _ctx: &StrategyContext) {
+
+    fn on_kline(&mut self, _kline: &Kline, _ctx: &StrategyContext) {
         // debug!("kline recv {:?}", kline);
-        // log all klines, mark closed ones
-        // if kline.is_closed {
-        //     info!(
-        //         "[CLOSED] Kline: {:?} {:?} close={:?}",
-        //         &kline.symbol, kline.interval, kline.close
-        //     );
-        //     let order = PlaceOrder {
-        //         symbol: kline.symbol,
-        //         venue: kline.venue,
-        //         client_order_id: client_order_id_from_u8(self.next_cloid()),
-        //         price: kline.low,
-        //         qty: 12.0 / kline.low,
-        //         side: Side::LONG,
-        //         time_in_force: TimeInForce::PO,
-        //         order_type: OrderType::LIMIT,
-        //         passport_id: self.passport_id.clone(),
-        //     };
-        //     if !_ctx.has_duplicate(&order) {
-        //         let res = _ctx.place_order(order);
-        //         match res {
-        //             Ok(_) => {}
-        //             Err(e) => error!("{e}"),
-        //         }
-        //     }
-        // } else {
-        //     debug!(
-        //         "[OPEN] Kline: {:?} {:?} close={} T={:?}",
-        //         &kline.symbol, kline.interval, kline.close, kline.close_time
-        //     );
-        // }
     }
+    fn on_trade(&mut self, trade: &md_feed::types::trade::Trade, ctx: &StrategyContext) {}
     fn on_start(&mut self, _ctx: &StrategyContext) {}
     fn on_disconnect(&mut self, _ctx: &StrategyContext) {}
     fn on_recon(&mut self, _ctx: &StrategyContext) {}
     fn on_recon_done(&mut self, _ctx: &StrategyContext) {}
     fn on_recon_success(&mut self, _ctx: &StrategyContext) {}
     fn on_recon_fail(&mut self, _ctx: &StrategyContext) {}
-    fn on_order_update(&mut self, _order: &Order, _ctx: &StrategyContext) {
-        if _order.state == OrderState::NEW {
+
+    fn on_order_update(&mut self, order: &Order, ctx: &StrategyContext) {
+        if order.state == OrderState::NEW {
             let cancel = CancelOrder::new(
-                _order.symbol,
-                _order.venue,
-                _order.client_order_id,
-                self.passport_id.clone(),
+                order.symbol,
+                order.venue,
+                order.client_order_id,
+                self.passport_id,
             );
-            let res = _ctx.cancel_order(cancel);
+            let _ = ctx.cancel_order(cancel);
         }
     }
+
     fn on_fill(&mut self, _order: &Order, _ctx: &StrategyContext) {}
     fn on_position_update(&mut self, _ctx: &StrategyContext) {}
 }
@@ -168,7 +119,7 @@ pub fn main() {
     // create your strategy
     let strategy = Box::new(DummyStrategy {
         passport_id: 1234,
-        cloid: AtomicU8::new(0),
+        venue: Venue::Paradex,
     });
 
     // create runner from config file

@@ -263,6 +263,7 @@ impl TSRunner {
                                 .await
                                 .expect("failed to create paradex executor"),
                         ),
+                        Venue::Lighter => todo!("lighter executor not implemented"),
                         Venue::Binance => todo!(),
                         Venue::Okx => todo!(),
                     };
@@ -346,6 +347,7 @@ impl TSRunner {
                                     }
                                 }
                             }
+                            Venue::Lighter => todo!("lighter state subscriber not implemented"),
                             Venue::Binance => todo!(),
                             Venue::Okx => todo!(),
                         };
